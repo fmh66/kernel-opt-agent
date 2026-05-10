@@ -2,25 +2,27 @@
 
 | Field | Value |
 |-------|-------|
-| **Solution** | `v3.cu` |
+| **Solution** | `v5.cu` |
 | **Reference** | `ref.py` |
 | **GPU** | NVIDIA RTX A6000 |
 | **Arch** | sm_86 |
-| **Dims** | {'M': 4096, 'K': 4096, 'N': 4096} |
+| **Dims** | {'M': 1024, 'K': 1024, 'N': 1024} |
 | **Correctness** | PASS |
 
 ## Timing (CUDA Events)
 
-| Metric | Solution | Reference |
-|--------|----------:|----------:|
-| Execution Time (ms) | 9.4131 | 6.1841 |
-| Std dev (ms)        | 0.5836 | 0.0319 |
+| Metric | Solution | PyTorch Eager | PyTorch Compile |
+|--------|----------:|-------------:|----------------:|
+| Execution Time (ms) | 0.5306 | 0.1977 | 0.2446 |
+| Std dev (ms)        | 0.0188 | 0.0049 | 0.0079 |
+| Speedup (vs PyTorch Eager)    | 0.37x | — | — |
+| Speedup (vs PyTorch Compile)    | 0.46x | — | — |
 
 ## Hardware Metrics (nsight-python)
 
-| Metric | Solution | Reference |
-|--------|----------:|----------:|
-| SM Throughput (% peak) | 72.5530 | 72.4947 |
-| Memory Throughput (% peak) | 73.9836 | 74.2628 |
-| DRAM Bandwidth (bytes/s) | 5.39e+11 | 5.41e+11 |
-| Achieved Occupancy (%) | 32.7011 | 32.6999 |
+| Metric | Solution | PyTorch Eager | PyTorch Compile |
+|--------|----------:|----------:|----------:|
+| SM Throughput (% peak) | 76.6065 | 76.6759 | 76.7676 |
+| Memory Throughput (% peak) | 3.8846 | 3.8836 | 3.8937 |
+| DRAM Bandwidth (bytes/s) | 2.83e+10 | 2.83e+10 | 2.84e+10 |
+| Achieved Occupancy (%) | 90.2079 | 90.0954 | 90.2459 |

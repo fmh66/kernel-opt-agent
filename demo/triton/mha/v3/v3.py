@@ -1,43 +1,16 @@
-"""v3: Tensor Core acceleration (TF32) + complete autotune.
-
-Key changes from v2:
-- allow_tf32=True in tl.dot: Triton targets Ampere Tensor Cores (TF32 mode),
-  which deliver ~3× more FLOPS vs FP32 CUDA cores.  Reduces the Short Scoreboard
-  (shared-memory staging) stall that dominates v2 by executing the same multiply
-  with fewer cycles.  Precision trade-off: TF32 rounds each input mantissa to
-  10 bits before multiply, introducing ~1e-3 relative error; tolerance set to 2e-3.
-- Expanded autotune grid now includes BLOCK_M=32/BLOCK_N=64 (the config that was
-  fastest in v2) alongside larger/smaller tile variants, letting the autotuner
-  confirm or improve the optimal tile configuration on this specific GPU.
-- num_stages=2 kept where it helps; num_stages=1 included for comparison.
-"""
-
 import math
 import torch
 import triton
 import triton.language as tl
 
 
-@triton.autotune(
-    configs=[
-        # include v2's winning config plus TC variant
-        triton.Config({"BLOCK_M": 32, "BLOCK_N": 64,  "num_warps": 4, "num_stages": 1}),
-        triton.Config({"BLOCK_M": 32, "BLOCK_N": 64,  "num_warps": 4, "num_stages": 2}),
-        triton.Config({"BLOCK_M": 32, "BLOCK_N": 128, "num_warps": 4, "num_stages": 1}),
-        triton.Config({"BLOCK_M": 32, "BLOCK_N": 128, "num_warps": 4, "num_stages": 2}),
-        triton.Config({"BLOCK_M": 16, "BLOCK_N": 64,  "num_warps": 4, "num_stages": 2}),
-        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128, "num_warps": 4, "num_stages": 2}),
-        triton.Config({"BLOCK_M": 64, "BLOCK_N": 64,  "num_warps": 4, "num_stages": 1}),
-        triton.Config({"BLOCK_M": 32, "BLOCK_N": 64,  "num_warps": 8, "num_stages": 1}),
-    ],
-    key=["N", "d_k"],
-)
 @triton.jit
-def mha_kernel_v3(
+def fused_mha_kernel(
     q_ptr,
     k_ptr,
     v_ptr,
     out_ptr,
+    H,
     N,
     d_k,
     stride_q_h,
@@ -53,79 +26,73 @@ def mha_kernel_v3(
     stride_o_n,
     stride_o_d,
     inv_sqrt_dk,
-    BLOCK_M: tl.constexpr,
+    BLOCK_I: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_D: tl.constexpr,
 ):
     h = tl.program_id(0)
-    m_blk = tl.program_id(1)
+    i_start = tl.program_id(1) * BLOCK_I
 
-    offs_m = m_blk * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_i = i_start + tl.arange(0, BLOCK_I)
+    i_mask = offs_i < N
+
     offs_d = tl.arange(0, BLOCK_D)
-    offs_n = tl.arange(0, BLOCK_N)
-
-    m_mask = offs_m < N
     d_mask = offs_d < d_k
 
-    # Load Q tile [BLOCK_M, BLOCK_D] once — reused for all key blocks
     q_ptrs = (
         q_ptr
         + h * stride_q_h
-        + offs_m[:, None] * stride_q_n
+        + offs_i[:, None] * stride_q_n
         + offs_d[None, :] * stride_q_d
     )
-    q_tile = tl.load(q_ptrs, mask=m_mask[:, None] & d_mask[None, :], other=0.0).to(tl.float32)
+    q = tl.load(q_ptrs, mask=i_mask[:, None] & d_mask[None, :], other=0.0)
 
-    acc = tl.zeros([BLOCK_M, BLOCK_D], dtype=tl.float32)
-    m_i = tl.full([BLOCK_M], value=float("-inf"), dtype=tl.float32)
-    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    m_i = tl.full((BLOCK_I,), -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_I,), dtype=tl.float32)
+    acc = tl.zeros((BLOCK_I, BLOCK_D), dtype=tl.float32)
 
     for n_start in range(0, N, BLOCK_N):
-        cur_offs_n = n_start + offs_n
-        n_mask = cur_offs_n < N
-        kv_mask = n_mask[:, None] & d_mask[None, :]
+        offs_n = n_start + tl.arange(0, BLOCK_N)
+        n_mask = offs_n < N
 
-        # Load K tile [BLOCK_N, BLOCK_D]
         k_ptrs = (
             k_ptr
             + h * stride_k_h
-            + cur_offs_n[:, None] * stride_k_n
-            + offs_d[None, :] * stride_k_d
+            + offs_n[None, :] * stride_k_n
+            + offs_d[:, None] * stride_k_d
         )
-        k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.0).to(tl.float32)
+        k = tl.load(k_ptrs, mask=d_mask[:, None] & n_mask[None, :], other=0.0)
 
-        # QK^T via Tensor Cores (TF32): ~3× faster than FP32 CUDA cores
-        scores = tl.dot(q_tile, tl.trans(k_tile), allow_tf32=True) * inv_sqrt_dk
-        scores = tl.where(n_mask[None, :], scores, float("-inf"))
+        scores = tl.dot(q, k) * inv_sqrt_dk
+        scores = tl.where(n_mask[None, :], scores, -float("inf"))
 
         m_new = tl.maximum(m_i, tl.max(scores, axis=1))
         alpha = tl.exp(m_i - m_new)
         p = tl.exp(scores - m_new[:, None])
-        p = tl.where(n_mask[None, :], p, 0.0)
-        l_i = alpha * l_i + tl.sum(p, axis=1)
+        l_new = alpha * l_i + tl.sum(p, axis=1)
 
-        # Load V tile [BLOCK_N, BLOCK_D]
         v_ptrs = (
             v_ptr
             + h * stride_v_h
-            + cur_offs_n[:, None] * stride_v_n
+            + offs_n[:, None] * stride_v_n
             + offs_d[None, :] * stride_v_d
         )
-        v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.0).to(tl.float32)
+        v = tl.load(v_ptrs, mask=n_mask[:, None] & d_mask[None, :], other=0.0)
 
-        # PV via Tensor Cores (TF32): accumulation stays FP32
-        acc = alpha[:, None] * acc + tl.dot(p, v_tile, allow_tf32=True)
+        acc = alpha[:, None] * acc + tl.dot(p, v)
+
         m_i = m_new
+        l_i = l_new
 
-    out = acc / l_i[:, None]
+    acc = acc / l_i[:, None]
 
     out_ptrs = (
         out_ptr
         + h * stride_o_h
-        + offs_m[:, None] * stride_o_n
+        + offs_i[:, None] * stride_o_n
         + offs_d[None, :] * stride_o_d
     )
-    tl.store(out_ptrs, out.to(tl.float32), mask=m_mask[:, None] & d_mask[None, :])
+    tl.store(out_ptrs, acc, mask=i_mask[:, None] & d_mask[None, :])
 
 
 def solve(
@@ -138,19 +105,47 @@ def solve(
     num_heads: int,
 ):
     d_k = d_model // num_heads
-    block_d = triton.next_power_of_2(d_k)
 
-    grid = lambda meta: (num_heads, triton.cdiv(N, meta["BLOCK_M"]))
-    mha_kernel_v3[grid](
-        Q, K, V, output,
-        N, d_k,
-        d_k, d_model, 1,
-        d_k, d_model, 1,
-        d_k, d_model, 1,
-        d_k, d_model, 1,
+    q = Q.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()
+    k = K.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()
+    v = V.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()
+
+    context = torch.empty((num_heads, N, d_k), device=Q.device, dtype=Q.dtype)
+
+    block_d = min(128, triton.next_power_of_2(d_k))
+    block_n = 128
+    block_i = 64
+
+    grid = (num_heads, triton.cdiv(N, block_i))
+    fused_mha_kernel[grid](
+        q,
+        k,
+        v,
+        context,
+        num_heads,
+        N,
+        d_k,
+        q.stride(0),
+        q.stride(1),
+        q.stride(2),
+        k.stride(0),
+        k.stride(1),
+        k.stride(2),
+        v.stride(0),
+        v.stride(1),
+        v.stride(2),
+        context.stride(0),
+        context.stride(1),
+        context.stride(2),
         1.0 / math.sqrt(d_k),
+        BLOCK_I=block_i,
+        BLOCK_N=block_n,
         BLOCK_D=block_d,
+        num_stages=1,
     )
+
+    out = context.transpose(0, 1).contiguous().view(N, d_model)
+    output.copy_(out)
     return output
 
 

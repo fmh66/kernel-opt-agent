@@ -1,0 +1,4 @@
+Hypothesis: Add #pragma unroll 4 on the output weighted-sum loop to improve ILP and hide V global memory load latency
+Rationale : v3 NCU shows Long Scoreboard=35.02% still dominant (V reads in output loop suffer global memory latency).
+            Unrolling the N=512 output loop by 4x exposes 4 independent V loads per iteration, allowing the warp scheduler to overlap load latency with FMA computation.
+Expected  : Long Scoreboard stall ↓ below 28%, IPC ↑, latency ↓ 10-20%.

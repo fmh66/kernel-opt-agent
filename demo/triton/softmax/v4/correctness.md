@@ -16,7 +16,7 @@
 
 | Tensor | Type | Pass | Max |Δ| | Mean |Δ| | Mean Rel | Mismatches |
 |--------|------|:----:|---------:|----------:|---------:|------------|
-| output | tensor[float32] | ✓ | 1.8626e-08 | 1.0447e-10 | 1.2138e-07 | — |
+| output | tensor[float32] | ✓ | 7.4506e-09 | 7.4593e-11 | 9.1010e-08 | — |
 
 ## Value Previews
 

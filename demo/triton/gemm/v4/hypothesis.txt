@@ -1,0 +1,9 @@
+Hypothesis: Increase BLOCK_K from 32→64 to halve K-loop iterations (32→16)
+Rationale : v0 K-loop has 32 iterations, each with barrier sync overhead. Doubling BLOCK_K
+            doubles shared memory per block (32KB→64KB) which reduces blocks/SM from 4→2,
+            but halves barrier count (32→16) and enables larger per-iteration dot products
+            (64×64×64 vs 64×64×32) that better amortize tl.dot MMA overhead.
+            For small 1024×1024 GEMM, reducing loop overhead may outweigh occupancy loss.
+Expected  : Barrier stall ↓ significantly (fewer iterations), SMA pipe utilization may
+            improve with larger dot products. Occupancy ↓ expected from 23%→~12%.
+            Net latency: uncertain — tradeoff between fewer barriers and lower occupancy.

@@ -2,14 +2,14 @@
 
 | Field | Value |
 |---|---|
-| **Kernel** | v0.py |
+| **Kernel** | mha.py |
 | **Backend** | triton |
 | **Reference** | ref.py |
 | **GPU** | NVIDIA RTX A6000 |
 | **Arch** | sm_86 |
 | **Dims** | {'N': 1024, 'd_model': 1024, 'num_heads': 16} |
 | **Buf/ptr** | 4194304 elems |
-| **Tolerance** | atol=0.001  rtol=0.001 |
+| **Tolerance** | atol=0.001  rtol=0.01 |
 | **Result** | **ALL PASS** |
 
 ## Output Tensors

@@ -1,0 +1,10 @@
+Hypothesis: Shared memory tiling with tile-size=16 to reduce global memory latency
+Rationale : v0 NCU shows Memory-Bound with Global Load Efficiency=56.25% (poor coalescing),
+            Long Scoreboard stall=4.25 (memory latency stall dominant).
+            Naive kernel loads each A and B element K times from global memory.
+            Shared memory tiling loads each element once per tile, achieving
+            O(TILE) reuse — each global load serves TILE FMA operations instead of 1.
+            Experience log confirms this exact optimization yielded 1.31x speedup
+            (0.93→0.71ms) with Global Load Efficiency improving 56→100%.
+Expected  : Global Load Efficiency ↑ toward 100%, DRAM bandwidth ↓, L1 Bank Conflicts ↓,
+            latency ↓ 20-30%, but Barrier stall may emerge as new bottleneck from __syncthreads().

@@ -1,0 +1,10 @@
+Hypothesis: BLOCK_K=16 + num_stages=4 for deeper software pipelining at same SMEM budget (32KB)
+Rationale : v0 uses BLOCK_K=32 with implicit num_stages=2, using 32KB SMEM. BLOCK_K=16
+            halves per-stage data (8KB/stage) enabling 4 stages at the same 32KB total.
+            v4 showed halving K-loop iterations reduced barriers 82% but collapsed occupancy.
+            This goes the opposite direction: more iterations (64) but 4-stage pipelining
+            should better overlap loads with compute, hiding load latency.
+            Same grid (256 blocks), same SMEM (32KB), same occupancy (25%). One variable:
+            deeper pipelining vs narrower dot products.
+Expected  : Long Scoreboard stall ↓ (loads better hidden), Short Scoreboard stable,
+            latency potentially 5-10% better from improved load/compute overlap.

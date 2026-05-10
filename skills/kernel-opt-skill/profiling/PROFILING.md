@@ -3,7 +3,7 @@ name: profiling
 description: Validate CUDA/Triton kernel correctness and collect NCU profiles; interpret NCU metrics to classify bottlenecks.
 ---
 
-# profiling-skill
+# profiling
 
 ## Directory Structure
 
@@ -17,7 +17,7 @@ profiling/
     └── ncu_profile.py
 ```
 
-## Correctness Check
+## Step 0 — Correctness Check
 
 > **Prerequisites**
 > - CUDA: compile the shared library via nvcc first; the script only loads, does not compile
@@ -56,7 +56,7 @@ python script/correctness_check.py <solution.{cu,py}> \
 
 ---
 
-## NCU Profiling (via nsight-python)
+## Step 1 — NCU Profiling (via nsight-python)
 
 > **Prerequisites**
 > - CUDA: compile the shared library via nvcc first; the script only loads, does not compile
@@ -101,7 +101,7 @@ python script/ncu_profile.py <solution.{cu,py}> \
 
 ---
 
-## NCU Interpretation & Bottleneck Classification
+## Step 2 — NCU Interpretation & Bottleneck Classification
 
 ### Primary Classification (SpeedOfLight)
 
@@ -129,9 +129,17 @@ python script/ncu_profile.py <solution.{cu,py}> \
 | `Stall Short Scoreboard` | high | Latency (Shared/L1 latency) |
 | `Branch Efficiency` | < 100% | Compute (warp divergence) |
 
-> Full metric reference → `reference/NCU.md`
+> **Full metric reference with detailed explanations** → `reference/NCU.md` (includes per-category breakdowns: MemoryWorkloadAnalysis, ComputeWorkloadAnalysis, Occupancy, Warp Scheduling, Branch Divergence)
 
----
+### Action
 
-> CUDA optimization strategies → cuda-skill (`cuda/CUDA.md`)
-> Triton optimization strategies → triton-skill (`triton/TRITON.md`)
+After classification, proceed to **Step 3** — apply the bottleneck-specific optimization strategy:
+
+| Bottleneck | Backend | Guide |
+|---|---|---|
+| Memory-Bound | CUDA | `experience/cuda/CUDA.md` § Memory-Bound |
+| Memory-Bound | Triton | `experience/triton/TRITON.md` § Memory-Bound |
+| Compute-Bound | CUDA | `experience/cuda/CUDA.md` § Compute-Bound |
+| Compute-Bound | Triton | `experience/triton/TRITON.md` § Compute-Bound |
+| Latency-Bound / Occupancy-Bound | CUDA | `experience/cuda/CUDA.md` § Latency-Bound |
+| Latency-Bound / Occupancy-Bound | Triton | `experience/triton/TRITON.md` § Latency-Bound |

@@ -1,0 +1,3 @@
+Hypothesis: Add const __restrict__ qualifiers to Q, K, V kernel pointer parameters to enable compiler's read-only cache (LDG) path and improve memory load scheduling
+Rationale : v4 NCU shows Long Scoreboard=44.67% (global memory latency dominates). const __restrict__ tells the compiler pointers don't alias, enabling automatic __ldg() path through the read-only (texture/L1) cache, which has lower latency and better cache behavior for broadcast/irregular access patterns.
+Expected  : Long Scoreboard stall ↓ below 38%, L1 Hit Rate ↑, DRAM bandwidth ↑, latency ↓ 5-15%.

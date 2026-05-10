@@ -1,0 +1,4 @@
+Hypothesis: Use __expf() fast-math intrinsic to reduce exp computation latency in the memory-critical loop
+Rationale : v2 NCU shows Memory SOL=93.72%. The exp computation is on the critical path of pass 2's memory-load loop. Faster exp via __expf() could allow the next global load to issue sooner.
+Expected  : Short Scoreboard stall ↓, latency ↓ 5-10%.
+Outcome   : Neutral — 0.2% change within noise. Confirms full memory-bandwidth saturation at 93.9%.

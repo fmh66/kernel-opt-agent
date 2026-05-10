@@ -1,6 +1,6 @@
 # kernel-opt-skill
 
-A CUDA/Triton kernel optimization skill that systematically profiles, identifies bottlenecks, and iteratively improves kernel performance.
+A CUDA/Triton kernel optimization skill for bottleneck-driven kernel tuning. It runs environment checks, correctness validation, Nsight Compute profiling, bottleneck classification, experience-guided one-variable iterations, outcome logging, final reports, and PyTorch benchmark comparison.
 
 [中文文档](README-zh.md)
 
@@ -23,12 +23,33 @@ kernel-opt-skill/
 ├── skills/kernel-opt-skill/
 │   ├── SKILL.md                  # Entry point, defines the optimization loop
 │   ├── env/                      # Environment check & GPU configuration
-│   ├── profiling/                # NCU profiling & correctness verification
-│   ├── benchmark/                # Solution vs reference framework comparison
-│   ├── cuda/                     # Memory / compute / latency optimization references
-│   ├── triton/                   # Triton optimization references
-│   └── report/                   # Report generation templates
-└── demo/                         # Optimization case studies (softmax, gemm, ...)
+│   ├── profiling/                # Correctness, NCU collection & metric interpretation
+│   ├── benchmark/                # Solution vs reference/PyTorch comparison
+│   ├── experience/               # Strategy guides, learned outcomes, recommendation CLI
+│   ├── reference/                # Hypothesis rules and one-variable iteration format
+│   └── report/                   # final_report generation guide
+└── demo/                         # CUDA/Triton optimization case studies
+```
+
+## What The Skill Does
+
+The skill treats optimization as an evidence loop:
+
+| Stage | Output | Purpose |
+| --- | --- | --- |
+| Environment check & config | `env_check.md` | Verify CUDA/PyTorch/Triton/ncu/nsight-python and lock GPU clocks before profiling |
+| Correctness check | `v{n}/correctness.md` | Stop on incorrect kernels before collecting performance data |
+| NCU profiling | `v{n}/ncu_summary.md`, `v{n}/ncu_details.md` | Collect Speed of Light, memory, compute, occupancy, warp stall, and divergence metrics |
+| Bottleneck classification | Read from NCU metrics | Classify memory-bound, compute-bound, latency-bound, or occupancy-bound behavior |
+| Experience query | `experience_log.py recommend` | Reuse successful past strategies and avoid known failures for similar kernels |
+| Hypothesis | `v{n}/hypothesis.txt` | Record exactly one intended change, rationale, and expected metric movement |
+| Iteration record | `experience_log.py add` | Persist success/failure/neutral results with metrics |
+| Finalization | `final_report.md`, `benchmark.md` | Select the best version, summarize the optimization path, and compare with PyTorch eager/compile |
+
+All script paths inside the skill are relative to the skill root:
+
+```bash
+SKILL_ROOT="/home/kernel-opt-skill/skills/kernel-opt-skill"
 ```
 
 ## Quick Start
@@ -39,11 +60,17 @@ Invoke the skill with your kernel file, iteration count, and output directory:
 /kernel-opt-skill Please optimize this kernel <kernel.cu>, run 3 iterations, output to <output_dir>
 ```
 
+Triton kernels are supported as well:
+
+```text
+/kernel-opt-skill Please optimize this Triton kernel <kernel.py>, run 5 iterations, output to <output_dir>
+```
+
 ### Minimal CUDA / Triton Templates
 
 #### CUDA (`.cu`)
 
-> Note: profiling scripts load the matching shared library and call `extern "C" void solve(...)`.
+> Profiling scripts load the matching shared library and call `extern "C" void solve(...)`.
 
 ```cpp
 #include <cuda_runtime.h>
@@ -52,7 +79,6 @@ __global__ void kernel(
     const float* in0, const float* in1, float* out, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        // TODO: replace with your kernel logic
         out[i] = in0[i] + in1[i];
     }
 }
@@ -68,7 +94,7 @@ extern "C" void solve(
 
 #### Triton (`.py`)
 
-> Note: profiling scripts require both `setup(**kwargs)` and `run_kernel(**kwargs)`.
+> Profiling scripts require both `setup(**kwargs)` and `run_kernel(**kwargs)`.
 
 ```python
 import torch
@@ -106,11 +132,9 @@ def run_kernel(**kwargs):
 
 #### Reference (`ref.py`)
 
-> Note: correctness/benchmark calls `reference(**kwargs)` as the baseline implementation.
+> correctness/benchmark calls `reference(**kwargs)` as the baseline implementation.
 
 ```python
-import torch
-
 def reference(**kwargs):
     x = kwargs["x"]
     y = kwargs["y"]
@@ -122,40 +146,72 @@ The optimization loop runs automatically:
 
 ```mermaid
 flowchart TD
-    A[Step 0: Correctness Check] --> B[Step 1: NCU Profiling]
-    B --> C["Step 2: Global Bottleneck Analysis (Speed of Light)"]
-    C --> D["Step 3: Targeted Optimization (Memory / Compute / Latency)"]
-    D --> E["Step 4–6: Deep Analysis (Occupancy / Warp Scheduling / Branch Divergence)"]
-    E --> F[Step 7: Generate Next Version]
-    F -->|Loop N times| B
-    F -->|Iteration limit reached| G["Generate final_report.md (compare all versions, select best) & benchmark"]
+    ENV["Environment Check & Config"] --> ENV_Q{Pass?}
+    ENV_Q -->|No| STOP[Stop and write error report]
+    ENV_Q -->|Yes| A[Step 0: Correctness Check]
+    A --> Q{Pass?}
+    Q -->|No| FIX[Fix kernel]
+    FIX --> A
+    Q -->|Yes| B[Step 1: NCU Profiling]
+    B --> C["Step 2: Bottleneck Classification"]
+    C --> D["Query Learned Experience"]
+    D --> E["Write hypothesis.txt"]
+    E --> F["Step 3-7: Apply One Change, Profile Again"]
+    F --> R["Record Outcome"]
+    R --> N{Max iterations reached?}
+    N -->|No| A
+    N -->|Yes| G["sync + stats, final_report.md, benchmark.md"]
 ```
 
 ### Output Structure
 
 ```text
 <output_dir>/
-├── ref.py                  # Reference implementation
-├── env_check.md            # Environment info
+├── ref.py
+├── env_check.md
 ├── v0/
-│   ├── v0.cu / v0.py       # Source code (CUDA / Triton)
-│   ├── correctness.md      # Correctness verification result
-│   ├── ncu_summary.md      # NCU metrics summary (LLM-friendly)
-│   └── ncu_details.md      # Full NCU metrics table
-├── v1/ v2/ v3/ ...         # Subsequent iterations (same structure)
-├── final_report.md         # Final optimization comparison report
-└── benchmark.md            # Best version vs reference performance comparison
+│   ├── v0.cu / v0.py
+│   ├── correctness.md
+│   ├── ncu_summary.md
+│   ├── ncu_details.md
+│   └── hypothesis.txt
+├── v1/ ... / vN/              # one directory per optimization iteration
+├── final_report.md
+└── benchmark.md
 ```
+
+`v0` is the initial implementation. `v1` through `vN` are successive one-variable iterations; the configured max iteration count is fixed once the run starts.
+
+## Experience Layer
+
+The updated skill routes CUDA and Triton tuning through `experience/`:
+
+| Path | Role |
+| --- | --- |
+| `experience/cuda/CUDA.md` | CUDA strategies organized by memory, compute, latency, and occupancy bottlenecks |
+| `experience/triton/TRITON.md` | Triton strategies for memory access, compute, pipelining, autotuning, and launch/grid choices |
+| `experience/learned/LEARNED.md` | Rules for recording, querying, merging, syncing, and summarizing optimization outcomes |
+| `experience/learned/scripts/experience_log.py` | CLI for `add`, `recommend`, `search`, `list`, `merge`, `sync`, and `stats` |
+| `reference/hypothesis.md` | Required `Hypothesis / Rationale / Expected` format and one-variable rule |
+
+Before writing code for a new version, the skill queries learned experience:
+
+```bash
+python $SKILL_ROOT/experience/learned/scripts/experience_log.py recommend \
+  --kernel <kernel_type> --backend <cuda|triton> --chip <sm_XX> --bottleneck <type>
+```
+
+After each iteration, it records the outcome. At the end, it runs `sync` and `stats` before generating `final_report.md` and `benchmark.md`.
 
 ## Case Studies
 
-Full optimization walkthroughs (source code, NCU metrics, per-iteration analysis, benchmarks) are in [demo/DEMO.md](demo/DEMO.md).
+Full optimization walkthroughs (source code, NCU metrics, per-iteration hypotheses, final reports, and benchmarks) are in [demo/DEMO.md](demo/DEMO.md).
 
-| Case | Shape | Final Speedup | Best Version vs PyTorch |
-| --- | --- | --- | --- |
-| [Softmax (CUDA)](demo/DEMO.md#softmax) | N=10240, D=1024 | **6.32×** | 1.85× faster than PyTorch |
-| [GEMM (CUDA)](demo/DEMO.md#gemm) | M=K=N=4096 | **6.81×** | 1.52× slower than cuBLAS |
-| [MHA (CUDA)](demo/DEMO.md#mha) | N=1024, d=512, h=8 | **10.23×** | 2.86× slower than Flash Attention |
-| [GEMM (Triton)](demo/DEMO.md#gemm-1) | M=N=K=10240 | **3.07×** | 2.28× faster than torch.mm |
-| [MHA (Triton)](demo/DEMO.md#mha-1) | N=1024, d=1024, h=16 | **626×** | 4.12× faster than PyTorch ref |
-| [Softmax (Triton)](demo/DEMO.md#softmax-1) | N=10240, D=1024 | 1.00× (v0 already optimal) | 1.79× faster than PyTorch |
+| Case | Shape | Best Version | Iteration Speedup | Best Version vs PyTorch Eager |
+| --- | --- | --- | ---: | --- |
+| [Softmax (CUDA)](demo/DEMO.md#cuda-softmax) | N=4096, D=4096 | v2 | **11.72x** | 2.73x faster |
+| [GEMM (CUDA)](demo/DEMO.md#cuda-gemm) | M=K=N=1024 | v5 | **1.80x** | 0.37x (slower than PyTorch/cuBLAS) |
+| [MHA (CUDA)](demo/DEMO.md#cuda-mha) | N=512, d=1024, h=16 | v5 | **8.90x** | 0.47x (slower than PyTorch) |
+| [GEMM (Triton)](demo/DEMO.md#triton-gemm) | M=K=N=1024 | v5 | **1.02x** | 1.27x faster |
+| [MHA (Triton)](demo/DEMO.md#triton-mha) | N=1024, d=1024, h=16 | v5 | **731x** | 4.76x faster |
+| [Softmax (Triton)](demo/DEMO.md#triton-softmax) | N=1024, D=1024 | v0 | 1.00x (v0 already best) | 1.88x faster |

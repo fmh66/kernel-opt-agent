@@ -1,0 +1,4 @@
+Hypothesis: Increase num_warps from default 4 to 8 and process 2 rows per block to improve memory latency hiding and compute intensity.
+Rationale : v0 NCU shows Memory SOL=85.57%, SM SOL=12.02%, Long Scoreboard=37.23%. L1 Hit Rate=0%. More warps/block should hide memory latency via better context switching during stalls.
+Expected  : Long Scoreboard ↓ below 30%, latency ↓ 10-20%.
+Outcome   : FAILURE — latency 0.0399→0.0415ms (+4%). L1 bank conflicts ↑48% (2839→4192), register pressure ↑ (23→28/thread). More warps increased memory contention without reducing traffic.

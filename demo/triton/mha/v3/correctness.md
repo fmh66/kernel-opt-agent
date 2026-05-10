@@ -9,14 +9,14 @@
 | **Arch** | sm_86 |
 | **Dims** | {'N': 1024, 'd_model': 1024, 'num_heads': 16} |
 | **Buf/ptr** | 4194304 elems |
-| **Tolerance** | atol=0.002  rtol=0.002 |
+| **Tolerance** | atol=0.001  rtol=0.01 |
 | **Result** | **ALL PASS** |
 
 ## Output Tensors
 
 | Tensor | Type | Pass | Max |Δ| | Mean |Δ| | Mean Rel | Mismatches |
 |--------|------|:----:|---------:|----------:|---------:|------------|
-| output | tensor[float32] | ✓ | 1.4911e-03 | 6.1214e-05 | 7.2850e-03 | — |
+| output | tensor[float32] | ✓ | 1.4718e-03 | 6.1381e-05 | 7.2590e-03 | — |
 
 ## Value Previews
 

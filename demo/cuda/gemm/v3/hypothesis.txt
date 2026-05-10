@@ -1,0 +1,10 @@
+Hypothesis: Fuse 4 K-tile loads per barrier cycle to further reduce __syncthreads() overhead
+Rationale : v2 NCU shows Barrier stall=6.30 remains the dominant bottleneck despite
+            halving barriers from 128→64 via 2-tile fusion. Loading and computing
+            4 tiles between barriers reduces sync calls from 64→32.
+            Each thread does 8 global loads + 64 FMAs per barrier (vs 4 loads + 32 FMAs in v2).
+            Shared memory doubles 4KB→8KB, still well within the 100KB SM budget.
+            More compute between barriers better hides remaining load latency.
+Expected  : Barrier stall ↓ 10-20%, Not Selected stall ↓, latency ↓ 2-5%.
+            Risk: longer time between barriers may increase average barrier wait time
+            if load imbalance across warps grows.

@@ -1,11 +1,3 @@
-"""v0: baseline — one program per output scalar output[h, i, d].
-
-Bug fix from original: tensor v was passed instead of v.stride(0) for stride_v_h.
-Structural fix: use original [N, d_model] tensor layout with explicit strides to
-avoid extra elementwise CUDA kernels from permute/contiguous/copy_ that break
-single-kernel profiling.
-"""
-
 import math
 import torch
 import triton
@@ -37,7 +29,7 @@ def fused_mha_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_D: tl.constexpr,
 ):
-    # one program computes one output element: output[h, i, d]
+    # 一个 program 计算一个 output[h, i, d]
     h = tl.program_id(0)
     i = tl.program_id(1)
     d = tl.program_id(2)
@@ -97,30 +89,46 @@ def solve(
     d_model: int,
     num_heads: int,
 ):
+    # 单 Triton kernel 融合 MHA: QK^T + softmax + PV
     d_k = d_model // num_heads
 
-    # Use Q/K/V with their original [N, d_model] layout and pass strides so that
-    # accessing head h, token i, dim j maps to tensor[i, h*d_k + j].
-    # stride_h = d_k (between heads), stride_n = d_model (between tokens), stride_d = 1
+    q = Q.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()  # [H, N, d_k]
+    k = K.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()  # [H, N, d_k]
+    v = V.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()  # [H, N, d_k]
+
+    context = torch.empty((num_heads, N, d_k), device=Q.device, dtype=Q.dtype)
+
     block_d = min(128, triton.next_power_of_2(d_k))
     block_n = 128
 
     grid = (num_heads, N, d_k)
     fused_mha_kernel[grid](
-        Q, K, V, output,
-        num_heads, N, d_k,
-        # Q strides: view [N, d_model] as [H, N, d_k]
-        d_k, d_model, 1,
-        # K strides
-        d_k, d_model, 1,
-        # V strides
-        d_k, d_model, 1,
-        # output strides (same logical layout)
-        d_k, d_model, 1,
+        q,
+        k,
+        v,
+        context,
+        num_heads,
+        N,
+        d_k,
+        q.stride(0),
+        q.stride(1),
+        q.stride(2),
+        k.stride(0),
+        k.stride(1),
+        k.stride(2),
+        v.stride(0),
+        v.stride(1),
+        v.stride(2),
+        context.stride(0),
+        context.stride(1),
+        context.stride(2),
         1.0 / math.sqrt(d_k),
         BLOCK_N=block_n,
         BLOCK_D=block_d,
     )
+
+    out = context.transpose(0, 1).contiguous().view(N, d_model)  # [N, d_model]
+    output.copy_(out)
     return output
 
 

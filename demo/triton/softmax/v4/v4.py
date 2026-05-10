@@ -4,25 +4,7 @@ import triton.language as tl
 
 
 @triton.jit
-def _online_softmax_combine(a_max, a_sum, b_max, b_sum):
-    """Associative (max, sum_exp) merge for online softmax tree-reduction.
-
-    By using tl.reduce with this combiner, the two separate tl.max + tl.sum
-    passes (4 inter-warp barriers) are replaced with a single pass (2 barriers).
-
-    tl.where guards against exp(-inf - (-inf)) = NaN for masked elements:
-    the False branch (0.0) is selected by SELP without propagating NaN.
-    """
-    new_max = tl.maximum(a_max, b_max)
-    new_sum = (
-        tl.where(a_max > -float("inf"), a_sum * tl.exp(a_max - new_max), 0.0)
-        + tl.where(b_max > -float("inf"), b_sum * tl.exp(b_max - new_max), 0.0)
-    )
-    return new_max, new_sum
-
-
-@triton.jit
-def softmax_kernel(
+def softmax_kernel_v4(
     input_ptr,
     output_ptr,
     N,
@@ -32,30 +14,18 @@ def softmax_kernel(
     BLOCK_SIZE: tl.constexpr,
 ):
     row = tl.program_id(0)
+    if row >= N:
+        return
 
     row_input_ptr = input_ptr + row * stride_input_row
     row_output_ptr = output_ptr + row * stride_output_row
 
-    col_offsets = tl.max_contiguous(tl.arange(0, BLOCK_SIZE), BLOCK_SIZE)
+    col_offsets = tl.arange(0, BLOCK_SIZE)
     mask = col_offsets < D
 
-    row_data = tl.load(row_input_ptr + col_offsets, mask=mask, other=-float("inf"))
+    row_data = tl.load(row_input_ptr + col_offsets, mask=mask, other=-float('inf'))
 
-    # Online softmax single-pass reduction:
-    #   initial state (m=x[i], d=1): exp(x[i]-x[i])=1, so sum starts at 1.
-    #   masked elements use d=0 to contribute nothing to the final sum.
-    m_init = row_data
-    d_init = tl.where(
-        mask,
-        tl.full([BLOCK_SIZE], 1.0, dtype=tl.float32),
-        tl.zeros([BLOCK_SIZE], dtype=tl.float32),
-    )
-
-    global_max, global_sum = tl.reduce(
-        (m_init, d_init), axis=0, combine_fn=_online_softmax_combine
-    )
-
-    softmax_out = tl.exp(row_data - global_max) / global_sum
+    softmax_out = tl.softmax(row_data)
 
     tl.store(row_output_ptr + col_offsets, softmax_out, mask=mask)
 
@@ -63,7 +33,8 @@ def softmax_kernel(
 def solve(input: torch.Tensor, output: torch.Tensor, N: int, D: int):
     BLOCK_SIZE = triton.next_power_of_2(D)
     grid = (N,)
-    softmax_kernel[grid](
+
+    softmax_kernel_v4[grid](
         input,
         output,
         N,
@@ -71,8 +42,9 @@ def solve(input: torch.Tensor, output: torch.Tensor, N: int, D: int):
         input.stride(0),
         output.stride(0),
         BLOCK_SIZE=BLOCK_SIZE,
-        num_warps=4,
+        num_warps=8,
     )
+
     return output
 
 

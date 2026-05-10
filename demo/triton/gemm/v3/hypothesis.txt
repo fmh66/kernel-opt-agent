@@ -1,0 +1,11 @@
+Hypothesis: Reduce BLOCK_M/BLOCK_N from 64→32 to increase grid parallelism (256→1024 blocks)
+Rationale : v0 grid size is only 256 blocks across 84 SMs (~3 blocks/SM), providing barely
+            1 wave/SM. With 4 blocks/SM limited by shared memory, and 4 warps/block, only
+            16 warps/SM are active — Short Scoreboard stall (0.70) dominates because there
+            aren't enough warps to hide shared memory latency in tl.dot.
+            Smaller tiles: grid=1024 blocks (~12/SM), SMEM=16KB/block (10 blocks/SM limit),
+            enabling ~40 warps/SM (62.5% theoretical occupancy).
+            Cost: 2× more K-loop iterations with less data reuse per tile.
+Expected  : Short Scoreboard stall ↓ as more warps available to hide latency,
+            Occupancy ↑, K-iteration overhead offset by better warp scheduling.
+            Net latency change: aim for 5-15% improvement.

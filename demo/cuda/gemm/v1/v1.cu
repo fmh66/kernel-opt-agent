@@ -1,6 +1,6 @@
 #include <cuda_runtime.h>
 
-#define TILE 32
+#define TILE 16
 
 __global__ void tiled_gemm(
     const float* __restrict__ A,
@@ -8,26 +8,36 @@ __global__ void tiled_gemm(
           float* __restrict__ C,
     int M, int K, int N)
 {
-    __shared__ float sA[TILE][TILE];
-    __shared__ float sB[TILE][TILE];
-
     int row = blockIdx.y * TILE + threadIdx.y;
     int col = blockIdx.x * TILE + threadIdx.x;
 
+    __shared__ float As[TILE][TILE];
+    __shared__ float Bs[TILE][TILE];
+
     float acc = 0.0f;
 
-    for (int t = 0; t < K; t += TILE) {
-        int aCol = t + threadIdx.x;
-        int bRow = t + threadIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
 
-        sA[threadIdx.y][threadIdx.x] = (row < M && aCol < K) ? A[row * K + aCol] : 0.0f;
-        sB[threadIdx.y][threadIdx.x] = (bRow < K && col < N) ? B[bRow * N + col] : 0.0f;
+    for (int t = 0; t < K; t += TILE) {
+        // Cooperative load of A tile (row,col) = (row, t+tx)
+        if (row < M && (t + tx) < K)
+            As[ty][tx] = A[row * K + (t + tx)];
+        else
+            As[ty][tx] = 0.0f;
+
+        // Cooperative load of B tile (row,col) = (t+ty, col)
+        if ((t + ty) < K && col < N)
+            Bs[ty][tx] = B[(t + ty) * N + col];
+        else
+            Bs[ty][tx] = 0.0f;
 
         __syncthreads();
 
-        #pragma unroll
-        for (int k = 0; k < TILE; k++)
-            acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+        // Compute partial dot product from shared memory
+        for (int k = 0; k < TILE; k++) {
+            acc += As[ty][k] * Bs[k][tx];
+        }
 
         __syncthreads();
     }
@@ -41,6 +51,7 @@ extern "C" void solve(
     int M, int K, int N)
 {
     dim3 threadsPerBlock(TILE, TILE);
+
     dim3 blocksPerGrid(
         (N + TILE - 1) / TILE,
         (M + TILE - 1) / TILE

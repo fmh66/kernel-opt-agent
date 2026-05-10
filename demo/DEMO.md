@@ -1,158 +1,181 @@
 # CUDA / Triton Kernel Optimization Demo
 
-**Environment**: NVIDIA RTX A6000 (CC 8.6) · CUDA 12.6 · Triton 3.6.0 · ncu 2024.3.2.0 · PyTorch 2.11.0+cu126
+This page summarizes the current demo artifacts under `demo/cuda/*` and `demo/triton/*`.
+
+**Primary environment**: NVIDIA RTX A6000 (CC 8.6 / sm_86), CUDA 12.6, Nsight Compute 2024.3.2.0, nsight-python 0.9.6. Most updated demos use Triton 3.6.0 and PyTorch 2.11.0+cu126; the Triton GEMM report was captured with Triton 3.4.0 and PyTorch 2.6.0+cu124.
+
+## Overview
+
+| Backend | Case | Shape | Best | Iteration Speedup | Benchmark vs PyTorch Eager | Correctness |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| CUDA | Softmax | N=4096, D=4096 | v2 | 11.72x | 2.73x faster | PASS |
+| CUDA | GEMM | M=K=N=1024 | v5 | 1.80x | 0.37x (slower) | PASS |
+| CUDA | MHA | N=512, d_model=1024, heads=16 | v5 | 8.90x | 0.47x (slower) | PASS |
+| Triton | GEMM | M=K=N=1024 | v5 | 1.02x | 1.27x faster | PASS |
+| Triton | MHA | N=1024, d_model=1024, heads=16 | v5 | 731x | 4.76x faster | PASS |
+| Triton | Softmax | N=1024, D=1024 | v0 | 1.00x | 1.88x faster | PASS |
 
 ---
 
 ## CUDA
 
-### Softmax
+### CUDA Softmax
 
-**Shape**: N=10240, D=1024
+Artifacts: `demo/cuda/softmax/`
 
-| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | Occupancy (%) | Load Eff (%) | Bottleneck | Key Optimization |
+**Shape**: N=4096, D=4096
+
+| Version | Time (ms) | Speedup | Mem Throughput (%) | SM Throughput (%) | Occupancy (%) | Load Eff (%) | Bottleneck | Key Optimization |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| v0 | 0.8992 | 1.00× | 2.99 | 33.2 | 16.6 | 12.5 | Latency | Naive (1 thread/row) |
-| v1 | 0.2219 | 4.05× | 16.8 | 81.9 | 87.5 | 100 | Memory | 1 block/row + warp shuffle reduce |
-| v2 | 0.1515 | 5.93× | — | 90.0 | 88.0 | 100 | Memory | Online softmax + float4 loads |
-| v3 | **0.1424** | **6.32×** | — | **91.4** | **97.0** | 100 | Memory | Shared memory row cache + `__launch_bounds__` |
+| v0 | 3.4769 | 1.00x | 13.35 | 1.21 | 16.66 | 12.50 | Memory | Naive row mapping, poor coalescing |
+| v1 | 0.4516 | 7.70x | 92.38 | 9.08 | 95.75 | 100.00 | Memory | One block per row + warp reductions |
+| v2 | **0.2967** | **11.72x** | 93.72 | 14.38 | 81.07 | 100.00 | Memory | Shared memory cache for exp values |
+| v3 | 0.3018 | 11.52x | 93.37 | 6.86 | 80.53 | 100.00 | Memory | `float4` vectorization attempt |
+| v4 | 0.2961 | 11.75x | 93.89 | 14.32 | 81.65 | 100.00 | Memory | `__expf` fast math |
+| v5 | 0.2960 | 11.75x | N/A | N/A | N/A | N/A | Memory | `__launch_bounds__` |
 
-**Benchmark**: v3 vs PyTorch (N=10240, D=1024)
+**Benchmark**: v2 vs PyTorch
 
-| Metric | v3 | PyTorch |
-| --- | ---: | ---: |
-| Time (ms) | **0.1469** | 0.2721 |
-| Mem Throughput (%) | 91.9 | 92.6 |
-| DRAM Bandwidth (GB/s) | 670 | 675 |
-| Occupancy (%) | 94.3 | 94.5 |
+| Metric | v2 | PyTorch Eager | PyTorch Compile |
+| --- | ---: | ---: | ---: |
+| Time (ms) | **0.2971** | 0.8112 | 0.7150 |
+| Speedup | **2.73x** | - | 2.41x |
+| Mem Throughput (%) | 93.60 | 93.58 | 93.62 |
+| DRAM Bandwidth (GB/s) | 682 | 682 | 682 |
+| Occupancy (%) | 80.43 | 80.52 | 80.51 |
 
-v3 is **1.85× faster** than PyTorch at near-identical DRAM bandwidth — the gap is PyTorch dispatch overhead.
+Main result: v2 reaches the DRAM bandwidth roofline. Coalesced row blocks and shared-memory caching provide the practical gains; later instruction-level changes are neutral.
 
----
+### CUDA GEMM
 
-### GEMM
+Artifacts: `demo/cuda/gemm/`
 
-**Shape**: M=K=N=4096
+**Shape**: M=K=N=1024
 
-| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | Occupancy (%) | FMA Util (%) | IPC | Bottleneck | Key Optimization |
+| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | Occupancy (%) | FMA Util (%) | Barrier Stall | Bottleneck | Key Optimization |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| v0 | 64.23 | 1.00× | 98.5 | 39.6 | 99.8 | 19.3 | 0.286 | Latency (Long SB=12.75) | Naive (non-coalesced, no smem) |
-| v1 | 47.88 | 1.34× | 79.3 | 25.7 | 66.7 | 7.9 | 0.215 | Latency (Barrier=3.01) | Shared memory tiling (32×32) |
-| v2 | 11.64 | 5.52× | 55.0 | 53.6 | 65.3 | 38.6 | 0.525 | Balanced (Short SB=2.97) | 2D register blocking (TM=4×TN=4, BK=8) |
-| v3 | **9.43** | **6.81×** | **72.6** | **73.9** | 32.7 | **55.8** | **0.717** | Balanced | BK=16 + TM=8 + smem padding + float4 store |
+| v0 | 0.9445 | 1.00x | 97.33 | 2.19 | 95.04 | 19.17 | 0.00 | Memory | Baseline GEMM |
+| v1 | 0.7025 | 1.34x | 94.53 | 2.84 | 95.21 | 9.97 | 5.96 | Barrier | Shared-memory tiling |
+| v2 | 0.6912 | 1.37x | 95.69 | 2.88 | 95.03 | 9.59 | 6.30 | Barrier | Fuse two K tiles per barrier |
+| v3 | 0.6842 | 1.38x | 96.36 | 2.92 | 94.93 | 9.99 | 5.76 | Barrier | Fuse four K tiles per barrier |
+| v4 | 0.7200 | 1.31x | 96.59 | 2.76 | 95.07 | 9.43 | 8.51 | Barrier | Larger TILE_K=64 attempt |
+| v5 | **0.5232** | **1.80x** | 76.70 | 3.89 | 90.21 | 12.46 | 8.44 | Compute+Barrier | Thread coarsening |
 
-**Benchmark**: v3 vs PyTorch/cuBLAS (M=K=N=4096)
+**Benchmark**: v5 vs PyTorch
 
-| Metric | v3 | PyTorch |
-| --- | ---: | ---: |
-| Time (ms) | 9.41 | **6.18** |
-| SM Throughput (%) | 72.6 | 72.5 |
-| Mem Throughput (%) | 74.0 | 74.3 |
-| DRAM Bandwidth (GB/s) | 539 | 541 |
-| Occupancy (%) | 32.7 | 32.7 |
+| Metric | v5 | PyTorch Eager | PyTorch Compile |
+| --- | ---: | ---: | ---: |
+| Time (ms) | 0.5306 | **0.1977** | 0.2446 |
+| Relative speed | 0.37x | - | 0.46x |
+| SM Throughput (%) | 76.61 | 76.68 | 76.77 |
+| Mem Throughput (%) | 3.88 | 3.88 | 3.89 |
+| Occupancy (%) | 90.21 | 90.10 | 90.25 |
 
-v3 is **1.52× slower** than cuBLAS at near-identical hardware utilization — the gap is cuBLAS's assembly-level ILP and double buffering.
+Main result: shared-memory tiling and thread coarsening improve the custom CUDA kernel, but it remains slower than PyTorch/cuBLAS because it does not use Tensor Cores or cuBLAS-level scheduling.
 
----
+### CUDA MHA
 
-### MHA
+Artifacts: `demo/cuda/mha/`
 
-**Shape**: N=1024, d_model=512, num_heads=8 (d_k=64)
+**Shape**: N=512, d_model=1024, num_heads=16
 
-| Version | Time (ms) | Speedup | SM Throughput (%) | Occupancy (%) | Load Eff (%) | Long SB | Barrier | Bottleneck | Key Optimization |
+| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | Occupancy (%) | Load Eff (%) | Long SB | Bottleneck | Key Optimization |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| v0 | 15.45 | 1.00× | 87.0 | 62.7 | 17.6 | 4.85 | **14.51** | Latency (Barrier) | Naive (serial QK^T in t==0) |
-| v1 | 4.15 | 3.72× | 17.8 | 63.9 | 22.2 | 6.73 | 2.06 | Latency (Short SB) | Parallel QK^T dot product |
-| v2 | 1.86 | 8.31× | 33.4 | 64.8 | 66.7 | **21.39** | 0.73 | Latency (Long SB) | float4 + 4-way FMA ILP |
-| v3 | 1.91 | 8.09× | 32.4 | 81.0 | 66.7 | 18.12 | 1.82 | Latency (Long SB) | BLOCKQ=2 (L1 reuse, slight regression) |
-| v4 | 1.99 | 7.76× | 87.9 | 20.5 | **100** | 2.02 | 0.53 | Compute (low occ.) | Flash Attn 2 + smem K/V tiling |
-| v5 | **1.51** | **10.23×** | **96.1** | **40.3** | **100** | **1.56** | 1.37 | Compute | v4 + BLOCKQ=2 (2× warps/SM) |
+| v0 | 7.7245 | 1.00x | 87.52 | 0.17 | 62.73 | 17.65 | 4.97 | Compute | Serial/under-parallelized baseline |
+| v1 | 1.8770 | 4.12x | 19.11 | 0.72 | 64.41 | 21.96 | 30.37 | Latency | Thread-level QK parallelism |
+| v2 | 1.9298 | 4.00x | 18.80 | 0.70 | 64.39 | 21.96 | 32.31 | Latency | Contiguous mapping attempt |
+| v3 | 1.0956 | 7.05x | 19.84 | 1.32 | 64.25 | 66.33 | 35.02 | Latency | `float4` vectorized loads |
+| v4 | 0.8696 | 8.88x | 24.24 | 1.63 | 65.31 | 66.33 | 44.67 | Latency | Loop unrolling / ILP |
+| v5 | **0.8680** | **8.90x** | 24.34 | 1.68 | 65.05 | 66.33 | 44.51 | Latency | `const __restrict__` |
 
-**Benchmark**: v5 vs PyTorch Flash Attention (N=1024, d_model=512, num_heads=8)
+**Benchmark**: v5 vs PyTorch
 
-| Metric | v5 | PyTorch |
-| --- | ---: | ---: |
-| Time (ms) | 1.4753 | **0.5153** |
-| SM Throughput (%) | 96.1 | 96.1 |
-| Mem Throughput (%) | 0.94 | 0.94 |
-| DRAM Bandwidth (GB/s) | 6.82 | 6.83 |
-| Occupancy (%) | 40.3 | 40.3 |
+| Metric | v5 | PyTorch Eager | PyTorch Compile |
+| --- | ---: | ---: | ---: |
+| Time (ms) | 0.8944 | 0.4241 | **0.3422** |
+| Relative speed | 0.47x | - | 0.38x |
+| SM Throughput (%) | 24.20 | 24.07 | 24.20 |
+| Mem Throughput (%) | 1.63 | 1.61 | 1.59 |
+| Occupancy (%) | 65.09 | 65.09 | 65.09 |
 
-v5 is **2.86× slower** than PyTorch at identical hardware utilization — PyTorch uses Tensor Cores (FP16/BF16) while v5 runs FP32.
+Main result: the custom CUDA MHA gains 8.9x through parallel QK work, vectorized loads, and ILP, but still trails PyTorch because the remaining path is latency-bound and lacks FlashAttention/Tensor Core-level algorithmic structure.
 
 ---
 
 ## Triton
 
-### GEMM
+### Triton GEMM
 
-**Shape**: M=N=K=10240
+Artifacts: `demo/triton/gemm/`
 
-| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | TC Util (%) | FMA Util (%) | Occupancy (%) | Regs/Thread | L2 Hit (%) | Math Throttle | Bottleneck | Key Optimization |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| v0 | 129.74 | 1.00× | 73.95 | 82.80 | 0.00 | 63.61 | 25.31 | 96 | 47.7 | 0.04 | Memory | Naive (FMA, no TC, no pipelining) |
-| v1 | 44.26 | 2.93× | **82.53** | 75.39 | **82.45** | 1.44 | 16.50 | 168 | 66.95 | 7.19 | Compute | `tf32` MMA + grouped L2 swizzle + `tl.range(num_stages=3)` |
-| v2 | 43.92 | 2.95× | 80.61 | 76.99 | 79.07 | 1.37 | 8.10 | 241 | 65.68 | 3.01 | Compute | `@autotune` (broken: `range()` bug disabled pipelining) |
-| v3 | **42.25** | **3.07×** | 75.32 | 73.23 | 76.91 | 2.45 | 16.85 | **128** | **82.00** | 5.20 | Compute | Fixed `tl.range()` + correct autotune + boundary mask fix |
+**Shape**: M=K=N=1024
 
-**Benchmark**: v3 vs `torch.mm` (M=N=K=10240)
+| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | FMA Util (%) | Occupancy (%) | Regs/Thread | Bottleneck | Key Optimization |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| v0 | 0.1613 | 1.00x | 51.71 | 13.94 | 59.53 | 22.98 | 96 | Balanced | Baseline 64x64x32 tiled FP32 GEMM |
+| v1 | 0.1645 | 0.98x | 51.76 | 13.60 | 59.25 | 23.02 | 96 | Balanced | `make_block_ptr` attempt |
+| v2 | 0.1819 | 0.89x | 47.47 | 12.52 | 49.11 | 42.64 | 80 | Shared-memory contention | `num_warps=8` |
+| v3 | 0.1916 | 0.84x | 80.88 | 12.64 | 37.80 | 37.13 | 56 | Overhead | Smaller tiles / larger grid |
+| v4 | 0.1699 | 0.95x | 46.77 | 20.03 | 51.92 | 8.32 | 128 | Low occupancy | Larger BLOCK_K=64 |
+| v5 | **0.1587** | **1.02x** | 53.42 | 13.31 | 57.32 | 23.48 | 96 | Balanced | BLOCK_K=16 + 4-stage pipelining |
 
-| Metric | v3 | torch.mm |
-| --- | ---: | ---: |
-| Time (ms) | 42.77 | 97.36 |
-| SM Throughput (%) | 76.12 | 75.85 |
-| Mem Throughput (%) | 77.71 | 80.09 |
-| DRAM Bandwidth (GB/s) | 566 | 584 |
-| Occupancy (%) | 16.66 | 16.66 |
+**Benchmark**: v5 vs PyTorch
 
-v3 is **2.28× faster** than `torch.mm` (which includes `copy_()` overhead). cuBLAS achieves ~7 ms for this shape — a **~6× gap** remains, limited by register pressure (128 regs/thread → 1 block/SM) and Math Pipe Throttle stall (5.2).
+| Metric | v5 | PyTorch Eager | PyTorch Compile |
+| --- | ---: | ---: | ---: |
+| Time (ms) | **0.1749** | 0.2214 | 0.2719 |
+| Speedup | **1.27x** | - | 1.55x |
 
----
+Main result: v0 was already strong for this small FP32 GEMM. v5 gains 1.6% by reducing per-stage shared memory and improving software pipelining; TF32/Tensor Core mode is the major remaining opportunity if looser tolerance is allowed.
 
-### MHA
+### Triton MHA
 
-**Shape**: N=1024, d_model=1024, num_heads=16 (d_k=64)
+Artifacts: `demo/triton/mha/`
 
-| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | TC Util (%) | Occupancy (%) | Regs/Thread | Long SB | Bottleneck | Key Optimization |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| v0 | 135.40 | 1.00× | 39.96 | 13.99 | 0 | 49.90 | 80 | 15.74 | Latency | Bug-fixed baseline; grid (H,N,d_k) — 64× redundant attention row computation |
-| v1 | 3.68 | 36.8× | 35.86 | 87.91 | 0 | 65.66 | 63 | 25.48 | Memory | Grid (H,N): one program computes full output row, eliminates 64× redundancy |
-| v2 | 0.73 | 185× | 20.21 | 12.47 | 0 | 8.33 | 255 | 0.09 | Latency (low occ.) | Flash Attention tiling + `tl.dot` for QK^T and PV (BLOCK_M=32) |
-| v3 | **0.22** | **626×** | 32.12 | 30.06 | **41.35** | 8.35 | 144 | 0.38 | Balanced (TC) | `allow_tf32=True` + `@triton.autotune` (BLOCK_M=64/BLOCK_N=64/num_warps=8) |
+**Shape**: N=1024, d_model=1024, num_heads=16
 
-**Benchmark**: v3 vs PyTorch reference (N=1024, d_model=1024, num_heads=16)
+| Version | Time (ms) | Speedup | Mem Throughput (%) | SM Throughput (%) | TC Util (%) | Occupancy (%) | Regs/Thread | Bottleneck | Key Optimization |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| v0 | 141.23 | 1.00x | 77.66 | 37.80 | 0.00 | 102.05 | 80 | Memory | Grid over `(H,N,d_k)`, redundant work |
+| v1 | 3.891 | 36.3x | 90.46 | 26.75 | 0.00 | 101.74 | 80 | Memory | Fuse d dimension into one program |
+| v2 | 0.284 | 497x | 78.08 | 35.26 | 45.25 | 100.11 | 140 | Memory | Query tiling + `tl.dot` Tensor Cores |
+| v3 | 0.264 | 535x | 78.45 | 41.97 | 50.73 | 100.29 | 255 | Memory | Larger K/V tile, BLOCK_N=128 |
+| v4 | 0.407 | 347x | 79.65 | 19.02 | 21.96 | 103.47 | 206 | Memory | Reduced query tile, BLOCK_I=32 |
+| v5 | **0.193** | **731x** | 80.01 | 42.76 | 51.52 | 77.91 | 255 | Memory | Pre-scale Q to fuse inner-loop multiply |
 
-| Metric | v3 | PyTorch |
-| --- | ---: | ---: |
-| Time (ms) | **0.2183** | 0.8989 |
-| SM Throughput (%) | 32.23 | 32.18 |
-| Mem Throughput (%) | 29.95 | 29.77 |
-| DRAM Bandwidth (GB/s) | 218 | 217 |
-| Occupancy (%) | 8.33 | 8.33 |
+**Benchmark**: v5 vs PyTorch
 
-v3 is **4.12× faster** than PyTorch reference at identical hardware utilization — the speedup comes from eliminating 64× algorithmic redundancy (grid fix), Flash Attention tiling, and TF32 Tensor Core acceleration.
+| Metric | v5 | PyTorch Eager | PyTorch Compile |
+| --- | ---: | ---: | ---: |
+| Time (ms) | **0.1939** | 0.9232 | 0.8104 |
+| Speedup | **4.76x** | - | 4.18x |
+| Correctness | PASS | - | - |
 
----
+Main result: v5 eliminates 64x redundant d-dimension work, adds query-side tiling with Tensor Cores, improves K/V tiling, and pre-scales Q to remove an inner-loop multiply. The updated benchmark is correctness PASS and 4.76x faster than PyTorch eager.
 
-### Softmax
+### Triton Softmax
 
-**Shape**: N=10240, D=1024
+Artifacts: `demo/triton/softmax/`
 
-| Version | Time (ms) | Speedup | SM Throughput (%) | Mem Throughput (%) | Occupancy (%) | Regs/Thread | Long SB (%) | Barrier (%) | Bottleneck | Key Optimization |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| v0 | **0.1477** | **1.00×** | 11.2 | 92.9 | 97.0 | 23 | 46.8 | 13.7 | Memory | Already optimal: single-pass fused softmax at 92.9% memory SOL |
-| v1 | 0.1632 | 0.90× | 11.0 | 91.2 | 97.8 | 22 | 51.6 | 15.1 | Memory | `tl.exp2` attempt — EX2 and EXP share identical MUFU throughput; extra FMUL hurts |
-| v2 | 0.1610 | 0.92× | 11.0 | 92.7 | 97.0 | 36 | 31.1 | 24.9 | Memory | 2 rows/program: hides DRAM latency (Long SB ↓) but doubles Barrier stalls |
-| v3 | 0.1491 | 0.99× | 7.2 | 93.2 | 65.4 | 31 | 31.6 | 8.4 | Memory | `num_warps=2` (64 threads): fewer reduction stages, lower occupancy offsets gain |
-| v4 | 0.1496 | 0.99× | 22.4 | 93.0 | 97.4 | 28 | 18.8 | 4.5 | Memory | Online softmax via `tl.reduce`: collapses all stalls but 10240 divergent branch targets + 3× extra `exp()` cancel savings |
+**Shape**: N=1024, D=1024
 
-**Benchmark**: v0 (best) vs PyTorch (N=10240, D=1024)
+| Version | Time (ms) | Speedup | Mem Throughput (%) | SM Throughput (%) | Occupancy (%) | Regs/Thread | Bottleneck | Key Optimization |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| v0 | **0.0399** | **1.00x** | 85.57 | 12.02 | 78.81 | 23 | Memory | Baseline already optimal |
+| v1 | 0.0415 | 0.96x | 77.69 | 21.24 | 98.34 | 28 | Memory | 2 rows/block + 8 warps |
+| v2 | 0.0438 | 0.91x | 79.89 | 10.22 | 52.78 | 26 | Memory | 2 rows/block + 4 warps |
+| v3 | 0.0406 | 0.98x | 85.82 | 12.43 | 77.50 | 23 | Memory | `tl.softmax` builtin |
+| v4 | 0.0646 | 0.62x | 83.12 | 22.85 | 93.44 | 20 | Memory | Single row + 8 warps |
+| v5 | 0.0437 | 0.91x | 85.68 | 7.83 | 40.24 | 33 | Memory | Single row + 2 warps |
 
-| Metric | v0 | PyTorch |
-| --- | ---: | ---: |
-| Time (ms) | **0.1479** | 0.2648 |
-| Mem Throughput (%) | 92.6 | 93.2 |
-| DRAM Bandwidth (GB/s) | 675 | 679 |
-| Occupancy (%) | 94.9 | 94.9 |
+**Benchmark**: v0 vs PyTorch
 
-v0 is **1.79× faster** than PyTorch at near-identical DRAM bandwidth — PyTorch uses multiple kernel passes (doubling DRAM traffic) while v0 fuses max-reduction, exp, sum-reduction, and normalization into a single pass. No further improvement was achievable within 4 iterations.
+| Metric | v0 | PyTorch Eager | PyTorch Compile |
+| --- | ---: | ---: | ---: |
+| Time (ms) | **0.0388** | 0.0731 | 0.1498 |
+| Speedup | **1.88x** | - | 3.86x |
+| Mem Throughput (%) | 74.06 | 73.08 | 73.75 |
+| DRAM Bandwidth (GB/s) | 537 | 531 | 537 |
+| Occupancy (%) | 19.75 | 19.98 | 20.03 |
+
+Main result: the starting Triton kernel was already the best version. Warp count tuning, multi-row batching, and builtin replacement did not reduce memory traffic and therefore regressed or stayed neutral.

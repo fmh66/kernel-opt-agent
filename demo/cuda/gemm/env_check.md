@@ -1,8 +1,8 @@
-#Environment Check
+# Environment Check
 
 ## Status
 - ready: yes
-- checked at: 2026-04-20T14:06:26
+- checked at: 2026-05-10T06:21:09
 - python: /home/kernel-opt-skill/.venv/bin/python
 - python version: 3.12.3 (main, Mar  3 2026, 12:15:18) [GCC 13.3.0]
 - selected gpu index: 0
@@ -17,6 +17,7 @@
 | nvcc executable | ok | /usr/local/cuda-12.6/bin/nvcc |
 | ncu executable | ok | /usr/local/cuda-12.6/bin/ncu |
 | nsight-python package | ok | nsight 0.9.6 |
+| triton package | ok | triton 3.6.0 |
 
 ## GPU
 - model: NVIDIA RTX A6000
@@ -40,6 +41,7 @@ Build cuda_12.6.r12.6/compiler.35059454_0
 Copyright (c) 2018-2024 NVIDIA Corporation
 Version 2024.3.2.0 (build 34861637) (public-release)
 - nsight-python: 0.9.6
+- triton: 3.6.0
 
 ## Environment variables
 - CUDA_PATH: (unset)

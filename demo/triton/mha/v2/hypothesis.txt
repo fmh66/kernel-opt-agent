@@ -1,0 +1,3 @@
+Hypothesis: Add query-side tiling (BLOCK_I=64) with tl.dot for QK^T and PV matmuls
+Rationale : v1 Memory SOL=90.46% >> SM SOL=26.75%. WarpExecEff=32%, no Tensor Core. Each program processes only 1 query, no K/V reuse. Past exp (id=27): 13.6x speedup.
+Expected  : Tensor Core > 40%. Memory SOL ↓. Latency ↓ > 10x.

@@ -1,0 +1,3 @@
+Hypothesis: Increase num_warps from default 4 to 8 and process 2 rows per block to improve memory latency hiding and compute intensity.
+Rationale : v0 NCU shows Memory SOL=85.57% (bandwidth-bound), SM SOL=12.02%, Long Scoreboard stall=37.23% (threads waiting on global memory). L1 Hit Rate=0%. By doubling warps per block and processing 2 rows per block, more warps can context-switch during memory stalls, and we amortize kernel launch overhead (~1024→512 blocks). Each block does 2x the work, increasing compute per launch.
+Expected  : Long Scoreboard stall ↓ below 30%, latency ↓ 10-20%, SM SOL modest ↑, Memory SOL stable or slight ↓.

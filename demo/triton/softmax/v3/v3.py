@@ -4,7 +4,7 @@ import triton.language as tl
 
 
 @triton.jit
-def softmax_kernel(
+def softmax_kernel_v3(
     input_ptr,
     output_ptr,
     N,
@@ -14,21 +14,18 @@ def softmax_kernel(
     BLOCK_SIZE: tl.constexpr,
 ):
     row = tl.program_id(0)
+    if row >= N:
+        return
 
     row_input_ptr = input_ptr + row * stride_input_row
     row_output_ptr = output_ptr + row * stride_output_row
 
-    # max_contiguous hint: tells the compiler the offsets are fully sequential,
-    # enabling 128-bit vectorized LDG/STG instructions.
-    col_offsets = tl.max_contiguous(tl.arange(0, BLOCK_SIZE), BLOCK_SIZE)
+    col_offsets = tl.arange(0, BLOCK_SIZE)
     mask = col_offsets < D
 
-    row_data = tl.load(row_input_ptr + col_offsets, mask=mask, other=-float("inf"))
+    row_data = tl.load(row_input_ptr + col_offsets, mask=mask, other=-float('inf'))
 
-    max_val = tl.max(row_data, axis=0)
-    numerator = tl.exp(row_data - max_val)
-    sum_val = tl.sum(numerator, axis=0)
-    softmax_out = numerator / sum_val
+    softmax_out = tl.softmax(row_data)
 
     tl.store(row_output_ptr + col_offsets, softmax_out, mask=mask)
 
@@ -36,11 +33,8 @@ def softmax_kernel(
 def solve(input: torch.Tensor, output: torch.Tensor, N: int, D: int):
     BLOCK_SIZE = triton.next_power_of_2(D)
     grid = (N,)
-    # num_warps=2: 64 threads/block
-    #   - 2-warp inter-warp reduction uses fewer shared mem writes + barriers
-    #     than 4-warp reduction (v0), reducing Short Scoreboard + Barrier stalls.
-    #   - Register budget allows 24 concurrent blocks/SM → 48 warps → 100% occupancy.
-    softmax_kernel[grid](
+
+    softmax_kernel_v3[grid](
         input,
         output,
         N,
@@ -48,8 +42,8 @@ def solve(input: torch.Tensor, output: torch.Tensor, N: int, D: int):
         input.stride(0),
         output.stride(0),
         BLOCK_SIZE=BLOCK_SIZE,
-        num_warps=2,
     )
+
     return output
 
 

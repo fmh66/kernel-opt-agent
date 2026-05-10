@@ -1,0 +1,3 @@
+Hypothesis: Use __expf() fast-math intrinsic instead of expf() to reduce exp computation latency, allowing memory loads to issue sooner in the exp+sum loop
+Rationale : v2 NCU shows Memory SOL=93.72%, Short Scoreboard=5.6%. The exp computation is on the critical path of the memory-load loop in pass 2. Faster exp via __expf() could reduce short scoreboard stalls and let the next global load issue earlier, better overlapping compute with memory latency.
+Expected  : Short Scoreboard stall ↓, latency ↓ 5-10%. Precision may degrade slightly but should stay within atol/rtol bounds.

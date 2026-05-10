@@ -1,0 +1,10 @@
+Hypothesis: Replace manual pointer arithmetic with tl.make_block_ptr for coalesced global memory access
+Rationale : v0 NCU shows Global Load Efficiency=0.00% and Short Scoreboard stall=0.70.
+            The current a_ptrs/b_ptrs use manual offset computation that prevents the
+            compiler from recognizing contiguous access and generating vectorized loads.
+            tl.make_block_ptr with order=(1,0) tells the compiler the contiguous
+            dimension, enabling ld.global.v4 instructions and proper coalescing.
+            The kernel is small (1024x1024) with L2 Hit Rate=93%, so better coalescing
+            should reduce L2 transaction count and shared memory stall time.
+Expected  : Global Load Efficiency ↑ significantly, Short Scoreboard stall ↓,
+            L1/L2 bandwidth ↓, latency ↓ 10-20%.

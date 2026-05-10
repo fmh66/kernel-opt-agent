@@ -1,0 +1,11 @@
+Hypothesis: Thread coarsening — each thread computes 2 output elements to improve
+            compute-to-barrier ratio and FMA utilization
+Rationale : v3 NCU shows FMA Utilization stuck at ~10% across all versions. Each thread
+            does only 16 FMAs per tile (64 per barrier) — the FMA pipe is idle 90% of time.
+            Having each thread compute 2 contiguous output elements doubles FMAs per thread
+            (2048 vs 1024) while keeping shared memory loading the same per tile.
+            Block size reduces from 16x16→8x16 (128 threads), grid doubles in N dim.
+            Each thread loads same A tile value once, uses it for 2 outputs.
+            More FMAs per global load improves arithmetic intensity.
+Expected  : FMA Utilization ↑ 50-100%, IPC ↑, latency ↓ 5-10%.
+            Risk: fewer warps per block (8→4) may reduce latency hiding.

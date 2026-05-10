@@ -1,9 +1,9 @@
 ---
 name: benchmark
-description: Benchmark a custom CUDA/Triton kernel against a reference implementation (PyTorch/CUTLASS). Measures execution time via CUDA Events and collects hardware metrics via nsight-python.
+description: Benchmark a custom CUDA/Triton kernel against a reference implementation (PyTorch). Measures execution time via CUDA Events and collects hardware metrics via nsight-python.
 ---
 
-# benchmark-skill
+# benchmark
 
 ## Directory Structure
 
@@ -18,11 +18,11 @@ benchmark/
 
 ## Overview
 
-Compares solution kernel performance against a reference implementation, outputting:
+Compares solution kernel performance against PyTorch reference (both **eager** and **torch.compile**), outputting:
 
-- **Execution time** (CUDA Events, 100-iteration mean ± std)
+- **Execution time** (CUDA Events, 100-iteration mean ± std) — 3-way comparison
 - **Hardware metrics** (nsight-python: SM throughput, memory throughput, DRAM bandwidth, Achieved Occupancy)
-- **Correctness validation** (`torch.allclose`, run before timing)
+- **Correctness validation** (`torch.allclose` against both eager and compiled reference, run before timing)
 
 > Measurement strategy: execution time is collected via CUDA Events (unaffected by nsight replay); nsight is only used for hardware utilization metrics.
 
@@ -80,4 +80,4 @@ python script/benchmark.py <solution.{cu,py}> \
 
 | File | Description |
 |---|---|
-| `benchmark.md` | Solution vs. reference comparison report with correctness, execution time, and hardware metrics |
+| `benchmark.md` | 3-way comparison report: Solution vs PyTorch Eager vs PyTorch Compile, with correctness, execution time, speedup, and hardware metrics |

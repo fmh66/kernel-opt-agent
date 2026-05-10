@@ -1,9 +1,10 @@
 import torch
-import torch.nn.functional as F
+
+atol = 1e-3
+rtol = 1e-2
 
 
-def reference(input: torch.Tensor, output: torch.Tensor, N: int, D: int) -> torch.Tensor:
-    x = input.view(N, D)
-    result = F.softmax(x, dim=-1)
-    output.copy_(result.view(-1))
-    return output
+def reference(input, output, N, D):
+    inp = input[:N * D].view(N, D)
+    out = torch.softmax(inp, dim=-1)
+    output[:N * D].copy_(out.reshape(-1))

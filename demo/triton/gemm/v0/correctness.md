@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| **Kernel** | v0.py |
+| **Kernel** | gemm.py |
 | **Backend** | triton |
 | **Reference** | ref.py |
 | **GPU** | NVIDIA RTX A6000 |
 | **Arch** | sm_86 |
-| **Dims** | {'M': 1024, 'N': 1024, 'K': 1024} |
+| **Dims** | {'M': 1024, 'K': 1024, 'N': 1024} |
 | **Buf/ptr** | 3145728 elems |
 | **Tolerance** | atol=0.0001  rtol=0.001 |
 | **Result** | **ALL PASS** |

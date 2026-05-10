@@ -1,15 +1,3 @@
-"""v2: Flash Attention tiling with tl.dot — BLOCK_M queries per program.
-
-Key changes from v1:
-- Grid changed from (H, N) to (H, ceil_div(N, BLOCK_M)): each program handles
-  BLOCK_M=32 query tokens simultaneously, amortizing K/V loads over BLOCK_M queries.
-- Use tl.dot for both QK^T [BLOCK_M, BLOCK_N] and PV [BLOCK_M, BLOCK_D]
-  computations, activating Tensor Cores (TF32 on Ampere sm_86).
-- Proper Flash Attention online softmax with per-row m_i/l_i vectors.
-- Coalesced loads: Q_tile [BLOCK_M, BLOCK_D] loaded once and reused for all N/BLOCK_N
-  iterations; K and V accessed as [BLOCK_N, BLOCK_D] row tiles.
-"""
-
 import math
 import torch
 import triton
@@ -17,11 +5,12 @@ import triton.language as tl
 
 
 @triton.jit
-def mha_kernel_v2(
+def fused_mha_kernel(
     q_ptr,
     k_ptr,
     v_ptr,
     out_ptr,
+    H,
     N,
     d_k,
     stride_q_h,
@@ -37,86 +26,73 @@ def mha_kernel_v2(
     stride_o_n,
     stride_o_d,
     inv_sqrt_dk,
-    BLOCK_M: tl.constexpr,
+    BLOCK_I: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_D: tl.constexpr,
 ):
     h = tl.program_id(0)
-    m_blk = tl.program_id(1)
+    i_start = tl.program_id(1) * BLOCK_I
 
-    offs_m = m_blk * BLOCK_M + tl.arange(0, BLOCK_M)  # query token indices
+    offs_i = i_start + tl.arange(0, BLOCK_I)
+    i_mask = offs_i < N
+
     offs_d = tl.arange(0, BLOCK_D)
-    offs_n = tl.arange(0, BLOCK_N)
-
-    m_mask = offs_m < N
     d_mask = offs_d < d_k
 
-    # Load Q tile [BLOCK_M, BLOCK_D] — loaded once, reused for all key blocks
     q_ptrs = (
         q_ptr
         + h * stride_q_h
-        + offs_m[:, None] * stride_q_n
+        + offs_i[:, None] * stride_q_n
         + offs_d[None, :] * stride_q_d
     )
-    q_mask = m_mask[:, None] & d_mask[None, :]
-    q_tile = tl.load(q_ptrs, mask=q_mask, other=0.0).to(tl.float32)  # [BLOCK_M, BLOCK_D]
+    q = tl.load(q_ptrs, mask=i_mask[:, None] & d_mask[None, :], other=0.0)
 
-    # Online softmax state per query row
-    acc = tl.zeros([BLOCK_M, BLOCK_D], dtype=tl.float32)
-    m_i = tl.full([BLOCK_M], value=float("-inf"), dtype=tl.float32)
-    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    m_i = tl.full((BLOCK_I,), -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_I,), dtype=tl.float32)
+    acc = tl.zeros((BLOCK_I, BLOCK_D), dtype=tl.float32)
 
     for n_start in range(0, N, BLOCK_N):
-        cur_offs_n = n_start + offs_n
-        n_mask = cur_offs_n < N
+        offs_n = n_start + tl.arange(0, BLOCK_N)
+        n_mask = offs_n < N
 
-        # Load K tile [BLOCK_N, BLOCK_D]
         k_ptrs = (
             k_ptr
             + h * stride_k_h
-            + cur_offs_n[:, None] * stride_k_n
-            + offs_d[None, :] * stride_k_d
+            + offs_n[None, :] * stride_k_n
+            + offs_d[:, None] * stride_k_d
         )
-        kn_mask = n_mask[:, None] & d_mask[None, :]
-        k_tile = tl.load(k_ptrs, mask=kn_mask, other=0.0).to(tl.float32)  # [BLOCK_N, BLOCK_D]
+        k = tl.load(k_ptrs, mask=d_mask[:, None] & n_mask[None, :], other=0.0)
 
-        # Scores [BLOCK_M, BLOCK_N] = Q_tile @ K_tile^T
-        scores = tl.dot(q_tile, tl.trans(k_tile), allow_tf32=False) * inv_sqrt_dk
+        scores = tl.dot(q, k) * inv_sqrt_dk
+        scores = tl.where(n_mask[None, :], scores, -float("inf"))
 
-        # Mask out-of-bounds keys
-        scores = tl.where(n_mask[None, :], scores, float("-inf"))
+        m_new = tl.maximum(m_i, tl.max(scores, axis=1))
+        alpha = tl.exp(m_i - m_new)
+        p = tl.exp(scores - m_new[:, None])
+        l_new = alpha * l_i + tl.sum(p, axis=1)
 
-        # Online softmax: per-row max/sum update
-        m_new = tl.maximum(m_i, tl.max(scores, axis=1))    # [BLOCK_M]
-        alpha = tl.exp(m_i - m_new)                         # [BLOCK_M]
-        p = tl.exp(scores - m_new[:, None])                  # [BLOCK_M, BLOCK_N]
-        p = tl.where(n_mask[None, :], p, 0.0)
-        l_i = alpha * l_i + tl.sum(p, axis=1)               # [BLOCK_M]
-
-        # Load V tile [BLOCK_N, BLOCK_D]
         v_ptrs = (
             v_ptr
             + h * stride_v_h
-            + cur_offs_n[:, None] * stride_v_n
+            + offs_n[:, None] * stride_v_n
             + offs_d[None, :] * stride_v_d
         )
-        v_tile = tl.load(v_ptrs, mask=kn_mask, other=0.0).to(tl.float32)  # [BLOCK_N, BLOCK_D]
+        v = tl.load(v_ptrs, mask=n_mask[:, None] & d_mask[None, :], other=0.0)
 
-        # Accumulate: P @ V [BLOCK_M, BLOCK_N] @ [BLOCK_N, BLOCK_D] = [BLOCK_M, BLOCK_D]
-        acc = alpha[:, None] * acc + tl.dot(p, v_tile, allow_tf32=False)
+        acc = alpha[:, None] * acc + tl.dot(p, v)
+
         m_i = m_new
+        l_i = l_new
 
-    # Normalize rows
-    out = acc / l_i[:, None]  # [BLOCK_M, BLOCK_D]
+    acc = acc / l_i[:, None]
 
-    # Store output[h, m_start:m_start+BLOCK_M, :]
     out_ptrs = (
         out_ptr
         + h * stride_o_h
-        + offs_m[:, None] * stride_o_n
+        + offs_i[:, None] * stride_o_n
         + offs_d[None, :] * stride_o_d
     )
-    tl.store(out_ptrs, out.to(tl.float32), mask=q_mask)
+    tl.store(out_ptrs, acc, mask=i_mask[:, None] & d_mask[None, :])
 
 
 def solve(
@@ -129,24 +105,46 @@ def solve(
     num_heads: int,
 ):
     d_k = d_model // num_heads
-    block_d = triton.next_power_of_2(d_k)
-    block_m = 32
-    block_n = 64
 
-    grid = (num_heads, triton.cdiv(N, block_m))
-    mha_kernel_v2[grid](
-        Q, K, V, output,
-        N, d_k,
-        d_k, d_model, 1,   # Q strides (h, n, d)
-        d_k, d_model, 1,   # K strides
-        d_k, d_model, 1,   # V strides
-        d_k, d_model, 1,   # output strides
+    q = Q.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()
+    k = K.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()
+    v = V.view(N, num_heads, d_k).permute(1, 0, 2).contiguous()
+
+    context = torch.empty((num_heads, N, d_k), device=Q.device, dtype=Q.dtype)
+
+    block_d = min(128, triton.next_power_of_2(d_k))
+    block_n = 64
+    block_i = 64
+
+    grid = (num_heads, triton.cdiv(N, block_i))
+    fused_mha_kernel[grid](
+        q,
+        k,
+        v,
+        context,
+        num_heads,
+        N,
+        d_k,
+        q.stride(0),
+        q.stride(1),
+        q.stride(2),
+        k.stride(0),
+        k.stride(1),
+        k.stride(2),
+        v.stride(0),
+        v.stride(1),
+        v.stride(2),
+        context.stride(0),
+        context.stride(1),
+        context.stride(2),
         1.0 / math.sqrt(d_k),
-        BLOCK_M=block_m,
+        BLOCK_I=block_i,
         BLOCK_N=block_n,
         BLOCK_D=block_d,
-        num_warps=4,
     )
+
+    out = context.transpose(0, 1).contiguous().view(N, d_model)
+    output.copy_(out)
     return output
 
 

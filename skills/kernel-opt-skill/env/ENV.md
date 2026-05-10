@@ -3,7 +3,7 @@ name: env
 description: Environment readiness check and configuration for CUDA/Triton kernel optimization.
 ---
 
-# env-skill
+# env
 
 ## Directory Structure
 

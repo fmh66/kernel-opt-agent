@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Benchmark CUDA kernel vs reference (PyTorch or CUTLASS).
+"""Benchmark CUDA/Triton kernel vs PyTorch reference (eager + compile).
 
-Compares performance of a custom CUDA kernel against a reference implementation
+Compares performance of a custom kernel against a PyTorch reference
 using CUDA event timing and nsight-python hardware metrics.
 
-The reference .py must define `reference(**kwargs)`.
-CUDA solution: .cu must expose `extern "C" void solve(...)`.
-Triton solution: .py must define `setup(**kwargs)` and `run_kernel(**kwargs)`.
+Reference .py must define `reference(**kwargs)` — in-place, PyTorch tensors.
+CUDA solution: .cu exposing `extern "C" void solve(...)`.
+Triton solution: .py defining `setup(**kwargs)` and `run_kernel(**kwargs)`.
 
 Usage:
     python benchmark.py solution.cu --ref=ref.py --output-dir=./out --M=1024 --N=1024
-    python benchmark.py solution.cu --ref=ref.py --output-dir=./out --skip-nsight --M=4096 --K=4096 --N=4096
+    python benchmark.py solution.cu --ref=ref.py --output-dir=./out --skip-nsight --M=4096 --N=4096
 """
 
 import argparse
+import copy
 import ctypes
 import importlib.util
-import copy
 import os
 import re
 import statistics
@@ -162,8 +162,12 @@ def _infer_backend(solution_file):
     return "triton" if os.path.splitext(solution_file)[1].lower() == ".py" else "cuda"
 
 
+# ---------------------------------------------------------------------------
+# Solution setup (CUDA / Triton)
+# ---------------------------------------------------------------------------
+
 def _setup_kernel(cu_file, dim_values, ptr_size_override, arch, seed):
-    """Load pre-compiled .so, allocate CUDA buffers, return callable + inputs."""
+    """Load pre-compiled .so, allocate CUDA buffers, return BackendState."""
     params = _parse_signature(cu_file)
 
     so_path = os.path.splitext(cu_file)[0] + (".dll" if os.name == "nt" else ".so")
@@ -271,25 +275,24 @@ def _setup_solution(solution_file, backend, dim_values, ptr_size_override, arch,
     raise ValueError(f"Unsupported backend: {resolved}")
 
 
-def _check_correctness(sol_tensors, ref_inputs_snapshot, ref_fn, output_names,
-                       atol=1e-4, rtol=1e-3):
-    """Run ref on cloned inputs and compare outputs with torch.allclose."""
-    cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
-    ref_call_inputs = _prepare_reference_call_inputs(cloned, output_names)
-    ref_fn(**ref_call_inputs)
-    torch.cuda.synchronize()
+# ---------------------------------------------------------------------------
+# Torch reference helpers
+# ---------------------------------------------------------------------------
 
-    all_pass = True
-    for name in output_names:
-        if name not in cloned or not isinstance(cloned[name], torch.Tensor):
-            continue
-        ok = torch.allclose(sol_tensors[name].float(), cloned[name].float(),
-                            atol=atol, rtol=rtol)
-        status = "PASS" if ok else "FAIL"
-        print(f"  [{status}] {name}")
-        if not ok:
-            all_pass = False
-    return all_pass
+def _make_torch_fns(ref_fn, ref_inputs_snapshot, output_names):
+    """Build eager/compile timing closures that clone inputs each call."""
+    compile_fn = torch.compile(ref_fn, dynamic=False)
+
+    def eager():
+        cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
+        ref_fn(**_prepare_reference_call_inputs(cloned, output_names))
+
+    def compiled():
+        cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
+        compile_fn(**_prepare_reference_call_inputs(cloned, output_names))
+
+    return eager, compiled, compile_fn
+
 
 # ---------------------------------------------------------------------------
 # NSight metrics
@@ -309,54 +312,8 @@ METRIC_LABELS = {
     "sm__warps_active.avg.pct_of_peak_sustained_active": "Achieved Occupancy (%)",
 }
 
-# module-level singletons — survive nsight re-entry
-_sol_state = None
-_ref_fn = None
-_ref_inputs = None
-_backend = "auto"
 
-
-def _init_solution(cu_file, dim_values, ptr_size, arch, seed):
-    global _sol_state
-    if _sol_state is None:
-        _sol_state = _setup_solution(cu_file, _backend, dim_values, ptr_size, arch, seed)
-    return _sol_state
-
-
-def _init_ref(ref_file, cu_file, dim_values, ptr_size, arch, seed):
-    global _ref_fn, _ref_inputs
-    if _ref_fn is None:
-        mod = _load_reference(ref_file)
-        _ref_fn = mod.reference
-        state = _init_solution(cu_file, dim_values, ptr_size, arch, seed)
-        _ref_inputs = {k: _clone_value(v) for k, v in state.ref_inputs.items()}
-    return _ref_fn, _ref_inputs
-
-
-def _ref_call():
-    _ref_fn(**_prepare_reference_call_inputs(_ref_inputs, _sol_state.output_names))
-
-# ---------------------------------------------------------------------------
-# Timing & profiling
-# ---------------------------------------------------------------------------
-
-def time_kernel(fn, warmup, iters):
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    times = []
-    for _ in range(iters):
-        start.record()
-        fn()
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-    return statistics.mean(times), (statistics.stdev(times) if len(times) > 1 else 0.0), times
-
-
-def profile_nsight(fn, warmup):
+def profile_nsight(fn, warmup, replay_mode="kernel"):
     metrics = list(dict.fromkeys(BENCH_METRICS))
 
     @nsight.analyze.kernel(
@@ -366,6 +323,7 @@ def profile_nsight(fn, warmup):
         output_csv=False,
         clock_control="none",
         cache_control="all",
+        replay_mode=replay_mode,
     )
     def _run(n_warmup):
         for _ in range(n_warmup):
@@ -391,16 +349,94 @@ def _fmt(v):
         return f"{v:.2e}" if abs(v) > 1e6 else f"{v:.4f}"
     return str(v)
 
+
+# ---------------------------------------------------------------------------
+# Timing & profiling
+# ---------------------------------------------------------------------------
+
+def time_kernel(fn, warmup, iters):
+    for _ in range(warmup):
+        fn()
+    torch.cuda.synchronize()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    times = []
+    for _ in range(iters):
+        start.record()
+        fn()
+        end.record()
+        torch.cuda.synchronize()
+        times.append(start.elapsed_time(end))
+    return statistics.mean(times), (statistics.stdev(times) if len(times) > 1 else 0.0), times
+
+
+def _run_variant(label, fn, warmup, iters, skip_nsight, under_nsight, replay_mode="kernel"):
+    """Time fn and optionally collect nsight metrics. Returns (ms, std, df)."""
+    ms, std = 0.0, 0.0
+    if not under_nsight:
+        print(f"[timing] {label} ({warmup} warmup, {iters} iters)...")
+        ms, std, _ = time_kernel(fn, warmup, iters)
+        print(f"[timing] {label} : {ms:.4f} ms ± {std:.4f} ms")
+    df = None
+    if not skip_nsight:
+        if not under_nsight:
+            print(f"[nsight] profiling {label}...")
+        try:
+            df = profile_nsight(fn, warmup, replay_mode=replay_mode)
+        except Exception as exc:
+            print(f"[nsight] {label} profiling failed: {exc}", file=sys.stderr)
+    return ms, std, df
+
+
+# ---------------------------------------------------------------------------
+# Correctness
+# ---------------------------------------------------------------------------
+
+def _check_correctness(sol_tensors, ref_inputs_snapshot, ref_fn, output_names,
+                       atol=1e-4, rtol=1e-3):
+    """Run ref on cloned inputs and compare outputs with torch.allclose."""
+    cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
+    ref_call_inputs = _prepare_reference_call_inputs(cloned, output_names)
+    ref_fn(**ref_call_inputs)
+    torch.cuda.synchronize()
+
+    all_pass = True
+    for name in output_names:
+        if name not in cloned or not isinstance(cloned[name], torch.Tensor):
+            continue
+        ok = torch.allclose(sol_tensors[name].float(), cloned[name].float(),
+                            atol=atol, rtol=rtol)
+        status = "PASS" if ok else "FAIL"
+        print(f"  [{status}] {name}")
+        if not ok:
+            all_pass = False
+    return all_pass
+
+
+def _run_correctness(label, sol_tensors, ref_inputs_snapshot, ref_fn, compile_fn,
+                     output_names, atol, rtol):
+    """Check solution against PyTorch eager and compiled reference."""
+    ok = True
+    print(f"[correctness] checking {label} vs PyTorch eager...")
+    ok = _check_correctness(sol_tensors, ref_inputs_snapshot, ref_fn,
+                            output_names, atol, rtol)
+    print(f"[correctness] checking {label} vs PyTorch compile...")
+    ok = _check_correctness(sol_tensors, ref_inputs_snapshot, compile_fn,
+                            output_names, atol, rtol) and ok
+    print(f"[correctness] {'PASS' if ok else 'FAIL'}\n")
+    return ok
+
+
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
 def build_report(solution_file, ref_file, dim_values, arch,
                  sol_ms, sol_std, sol_df,
-                 ref_ms, ref_std, ref_df,
+                 torch_eager_ms, torch_eager_std, torch_eager_df,
+                 torch_compile_ms, torch_compile_std, torch_compile_df,
                  correctness_pass):
     gpu = torch.cuda.get_device_name(torch.cuda.current_device())
-    correctness_str = "PASS" if correctness_pass else "FAIL"
 
     lines = [
         "# Benchmark Report",
@@ -412,34 +448,40 @@ def build_report(solution_file, ref_file, dim_values, arch,
         f"| **GPU** | {gpu} |",
         f"| **Arch** | {arch} |",
         f"| **Dims** | {dim_values} |",
-        f"| **Correctness** | {correctness_str} |",
+        f"| **Correctness** | {'PASS' if correctness_pass else 'FAIL'} |",
         "",
         "## Timing (CUDA Events)",
         "",
-        "| Metric | Solution | Reference |",
-        "|--------|----------:|----------:|",
-        f"| Execution Time (ms) | {sol_ms:.4f} | {ref_ms:.4f} |",
-        f"| Std dev (ms)        | {sol_std:.4f} | {ref_std:.4f} |",
-        "",
+        "| Metric | Solution | PyTorch Eager | PyTorch Compile |",
+        "|--------|----------:|-------------:|----------------:|",
+        f"| Execution Time (ms) | {sol_ms:.4f} | {torch_eager_ms:.4f} | {torch_compile_ms:.4f} |",
+        f"| Std dev (ms)        | {sol_std:.4f} | {torch_eager_std:.4f} | {torch_compile_std:.4f} |",
     ]
+    for label, base_ms in (("vs PyTorch Eager", torch_eager_ms), ("vs PyTorch Compile", torch_compile_ms)):
+        speedup = base_ms / sol_ms if sol_ms > 0 else float("inf")
+        lines.append(f"| Speedup ({label})    | {speedup:.2f}x | — | — |")
+    lines.append("")
 
-    if sol_df is not None and ref_df is not None:
+    dfs = {
+        "Solution": sol_df,
+        "PyTorch Eager": torch_eager_df,
+        "PyTorch Compile": torch_compile_df,
+    }
+    available = {k: v for k, v in dfs.items() if v is not None}
+    if available:
         lines += [
             "## Hardware Metrics (nsight-python)",
             "",
-            "| Metric | Solution | Reference |",
-            "|--------|----------:|----------:|",
+            "| Metric | " + " | ".join(available.keys()) + " |",
+            "|--------|" + "|".join(["----------:" for _ in available]) + "|",
         ]
         for metric, label in METRIC_LABELS.items():
-            sv = _get_metric(sol_df, metric)
-            rv = _get_metric(ref_df, metric)
-            lines.append(f"| {label} | {_fmt(sv)} | {_fmt(rv)} |")
-        lines.append("")
-    elif sol_df is not None or ref_df is not None:
-        lines.append("> *nsight profiling only succeeded for one side — no comparison table.*")
+            vals = [_fmt(_get_metric(df, metric)) for df in available.values()]
+            lines.append(f"| {label} | " + " | ".join(vals) + " |")
         lines.append("")
 
     return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -447,7 +489,7 @@ def build_report(solution_file, ref_file, dim_values, arch,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Benchmark CUDA/Triton kernel vs reference (PyTorch/CUTLASS)",
+        description="Benchmark CUDA/Triton kernel vs PyTorch (eager + compile)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("solution_file", help="Path to solution file (.cu or .py)")
@@ -474,9 +516,6 @@ def main():
                         help="Skip nsight hardware profiling; only run CUDA event timing")
 
     args, unknown = parser.parse_known_args()
-    global _backend
-    _backend = args.backend
-
     dim_values = _parse_dim_values(unknown)
 
     torch.cuda.set_device(args.gpu)
@@ -487,81 +526,68 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # nsight re-launches the whole process to inject the profiler;
-    # skip all non-profiling work in those child processes
+    # lightweight logging-only work in those child processes
     under_nsight = (
         "CUDA_INJECTION64_PATH" in os.environ
         or "NV_NSIGHT_INJECTION64_PATH" in os.environ
         or any(k.startswith("NV_NSIGHT_") for k in os.environ)
     )
 
+    # --- setup ----------------------------------------------------------
+
+    state = _setup_solution(solution_file, args.backend, dim_values,
+                            args.ptr_size, arch, args.seed)
+    ref_mod = _load_reference(ref_file)
+    inputs_snapshot = {k: _clone_value(v) for k, v in state.ref_inputs.items()}
+
+    sol_fn = state.callable
+    torch_eager_fn, torch_compile_fn_timing, torch_compile_ref = _make_torch_fns(
+        ref_mod.reference, inputs_snapshot, state.output_names)
+
     if not under_nsight:
         print(f"[benchmark] solution  : {solution_file}")
-        print(f"[benchmark] backend   : {_backend}")
+        print(f"[benchmark] backend   : {state.backend}")
         print(f"[benchmark] reference : {ref_file}")
         print(f"[benchmark] arch      : {arch}")
         print(f"[benchmark] dims      : {dim_values}")
         print()
 
-    state = _init_solution(solution_file, dim_values, args.ptr_size, arch, args.seed)
-    sol_fn = state.callable
-    _init_ref(ref_file, solution_file, dim_values, args.ptr_size, arch, args.seed)
+    # --- correctness ----------------------------------------------------
 
+    ok = True
     if not under_nsight:
-        # correctness check
         sol_fn()
         torch.cuda.synchronize()
-        print("[correctness] checking...")
-        ok = _check_correctness(
-            sol_tensors=state.tensors,
-            ref_inputs_snapshot=state.ref_inputs,
-            ref_fn=_ref_fn,
-            output_names=state.output_names,
-            atol=args.atol,
-            rtol=args.rtol,
+        ok = _run_correctness(
+            "solution", state.tensors, inputs_snapshot,
+            ref_mod.reference, torch_compile_ref,
+            state.output_names, args.atol, args.rtol,
         )
-        print(f"[correctness] {'PASS' if ok else 'FAIL'}\n")
 
-        # CUDA event timing
-        print(f"[timing] solution  ({args.warmup} warmup, {args.iters} iters)...")
-        sol_ms, sol_std, sol_times = time_kernel(sol_fn, args.warmup, args.iters)
-        print(f"[timing] solution  : {sol_ms:.4f} ms ± {sol_std:.4f} ms")
+    # --- timing & nsight ------------------------------------------------
 
-        print(f"[timing] reference ({args.warmup} warmup, {args.iters} iters)...")
-        ref_ms, ref_std, ref_times = time_kernel(_ref_call, args.warmup, args.iters)
-        print(f"[timing] reference : {ref_ms:.4f} ms ± {ref_std:.4f} ms")
-
-    # nsight profiling — triggers re-entry; runs in both parent and child,
-    # but only captures metrics when nsight.is_injected() is True
-    sol_df = ref_df = None
-    if not args.skip_nsight:
-        if not under_nsight:
-            print("\n[nsight] profiling solution...")
-        try:
-            sol_df = profile_nsight(sol_fn, args.warmup)
-        except Exception as exc:
-            print(f"[nsight] solution profiling failed: {exc}", file=sys.stderr)
-
-        if not under_nsight:
-            print("[nsight] profiling reference...")
-        try:
-            ref_df = profile_nsight(_ref_call, args.warmup)
-        except Exception as exc:
-            print(f"[nsight] reference profiling failed: {exc}", file=sys.stderr)
+    sol_ms, sol_std, sol_df = _run_variant(
+        "Solution", sol_fn, args.warmup, args.iters, args.skip_nsight, under_nsight)
+    torch_eager_ms, torch_eager_std, torch_eager_df = _run_variant(
+        "PyTorch eager", torch_eager_fn, args.warmup, args.iters, args.skip_nsight, under_nsight)
+    torch_compile_ms, torch_compile_std, torch_compile_df = _run_variant(
+        "PyTorch compile", torch_compile_fn_timing, args.warmup, args.iters, args.skip_nsight, under_nsight)
 
     if under_nsight:
         return 0
+
+    # --- report ---------------------------------------------------------
 
     report = build_report(
         solution_file=solution_file,
         ref_file=ref_file,
         dim_values=dim_values,
         arch=arch,
-        sol_ms=sol_ms,
-        sol_std=sol_std,
-        sol_df=sol_df,
-        ref_ms=ref_ms,
-        ref_std=ref_std,
-        ref_df=ref_df,
+        sol_ms=sol_ms, sol_std=sol_std, sol_df=sol_df,
+        torch_eager_ms=torch_eager_ms, torch_eager_std=torch_eager_std,
+        torch_eager_df=torch_eager_df,
+        torch_compile_ms=torch_compile_ms, torch_compile_std=torch_compile_std,
+        torch_compile_df=torch_compile_df,
         correctness_pass=ok,
     )
     report_path = output_dir / "benchmark.md"

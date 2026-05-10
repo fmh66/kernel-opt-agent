@@ -81,4 +81,4 @@
 
 ---
 
-Optimization entry point: `cuda/CUDA.md` — optimization priorities organized by bottleneck type.
+Optimization entry point: `experience/cuda/CUDA.md` — optimization priorities organized by bottleneck type.

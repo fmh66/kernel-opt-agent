@@ -1,87 +1,77 @@
 #include <cuda_runtime.h>
-#include <float.h>
+#include <cfloat>
 
-// v2: Online softmax (fused max+sum in one DRAM pass) + float4 vectorized loads.
-// v1 made 3 DRAM passes: (1) read for max, (2) read+exp+sum, (3) read+normalize.
-// v2 fuses passes 1+2 into one online pass, leaving only 2 DRAM reads + 1 write.
-// Online merge rule for partial (m1,s1) and (m2,s2):
-//   m = max(m1,m2),  s = s1*exp(m1-m) + s2*exp(m2-m)
-__global__ void softmax_v2(float* __restrict__ input,
-                            float* __restrict__ output,
-                            int N, int D) {
+#define WARP_SIZE 32
+#define BLOCK_DIM 256
+
+__global__ void softmax_v2(float* input, float* output, int N, int D) {
+    extern __shared__ float smem[];
+    float* exp_shared = smem; // D floats for exp values
+
     int row = blockIdx.x;
     if (row >= N) return;
 
-    const float4* __restrict__ in4 = (const float4*)(input  + (long long)row * D);
-    float4*       __restrict__ ot4 = (float4*)(output + (long long)row * D);
+    int tid = threadIdx.x;
+    int lane = tid % WARP_SIZE;
 
-    extern __shared__ float smem[];  // [num_warps] max | [num_warps] sum
-    const int tid       = threadIdx.x;
-    const int warp_id   = tid >> 5;
-    const int lane_id   = tid & 31;
-    const int num_warps = blockDim.x >> 5;
-    const int D4        = D >> 2;
+    float* in_row  = input  + row * D;
+    float* out_row = output + row * D;
 
-    float* smax = smem;
-    float* ssum = smem + num_warps;
-
-    // --- Pass 1: Online (max, sum) over float4 chunks ---
-    float row_max = -FLT_MAX, row_sum = 0.0f;
-
-    for (int i = tid; i < D4; i += blockDim.x) {
-        float4 v      = __ldg(&in4[i]);
-        float lm      = fmaxf(fmaxf(v.x, v.y), fmaxf(v.z, v.w));
-        float new_max = fmaxf(row_max, lm);
-        row_sum = row_sum * expf(row_max - new_max)
-                + expf(v.x - new_max) + expf(v.y - new_max)
-                + expf(v.z - new_max) + expf(v.w - new_max);
-        row_max = new_max;
+    // Step 1: Find row-wise max via warp-level reduction (read from global)
+    float max_val = -FLT_MAX;
+    for (int i = tid; i < D; i += BLOCK_DIM) {
+        max_val = fmaxf(max_val, in_row[i]);
     }
 
-    // Warp reduce: online merge
-    for (int off = 16; off > 0; off >>= 1) {
-        float om = __shfl_xor_sync(0xffffffff, row_max, off);
-        float os = __shfl_xor_sync(0xffffffff, row_sum, off);
-        float nm = fmaxf(row_max, om);
-        row_sum  = row_sum * expf(row_max - nm) + os * expf(om - nm);
-        row_max  = nm;
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        max_val = fmaxf(max_val, __shfl_xor_sync(0xffffffff, max_val, offset));
     }
-    if (lane_id == 0) { smax[warp_id] = row_max; ssum[warp_id] = row_sum; }
-    __syncthreads();
 
-    if (warp_id == 0) {
-        row_max = (lane_id < num_warps) ? smax[lane_id] : -FLT_MAX;
-        row_sum = (lane_id < num_warps) ? ssum[lane_id] :  0.0f;
-        for (int off = 16; off > 0; off >>= 1) {
-            float om = __shfl_xor_sync(0xffffffff, row_max, off);
-            float os = __shfl_xor_sync(0xffffffff, row_sum, off);
-            float nm = fmaxf(row_max, om);
-            row_sum  = row_sum * expf(row_max - nm) + os * expf(om - nm);
-            row_max  = nm;
-        }
-        if (lane_id == 0) { smax[0] = row_max; ssum[0] = row_sum; }
+    __shared__ float shared_max[BLOCK_DIM / WARP_SIZE];
+    if (lane == 0) {
+        shared_max[tid / WARP_SIZE] = max_val;
     }
     __syncthreads();
 
-    row_max = smax[0];
-    float inv_sum = 1.0f / ssum[0];
+    max_val = shared_max[0];
+    for (int i = 1; i < BLOCK_DIM / WARP_SIZE; i++) {
+        max_val = fmaxf(max_val, shared_max[i]);
+    }
 
-    // --- Pass 2: Normalize with float4 ---
-    for (int i = tid; i < D4; i += blockDim.x) {
-        float4 v = __ldg(&in4[i]);
-        float4 o;
-        o.x = expf(v.x - row_max) * inv_sum;
-        o.y = expf(v.y - row_max) * inv_sum;
-        o.z = expf(v.z - row_max) * inv_sum;
-        o.w = expf(v.w - row_max) * inv_sum;
-        ot4[i] = o;
+    // Step 2: Compute exp, store to shared memory, compute sum (single pass)
+    float sum_val = 0.0f;
+    for (int i = tid; i < D; i += BLOCK_DIM) {
+        float val = expf(in_row[i] - max_val);
+        exp_shared[i] = val;
+        sum_val += val;
+    }
+    __syncthreads(); // ensure all exp values are written to shared memory
+
+    // Warp reduction for sum
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        sum_val += __shfl_xor_sync(0xffffffff, sum_val, offset);
+    }
+
+    __shared__ float shared_sum[BLOCK_DIM / WARP_SIZE];
+    if (lane == 0) {
+        shared_sum[tid / WARP_SIZE] = sum_val;
+    }
+    __syncthreads();
+
+    sum_val = shared_sum[0];
+    for (int i = 1; i < BLOCK_DIM / WARP_SIZE; i++) {
+        sum_val += shared_sum[i];
+    }
+
+    // Step 3: Normalize from shared memory, write to output (single global write pass)
+    float inv_sum = 1.0f / sum_val;
+    for (int i = tid; i < D; i += BLOCK_DIM) {
+        out_row[i] = exp_shared[i] * inv_sum;
     }
 }
 
 extern "C" void solve(float* input, float* output, int N, int D) {
-    int threads   = 256;
-    int num_warps = threads / 32;
-    int shmem     = 2 * num_warps * sizeof(float);
-    softmax_v2<<<N, threads, shmem>>>(input, output, N, D);
+    size_t smem_bytes = D * sizeof(float);
+    softmax_v2<<<N, BLOCK_DIM, smem_bytes>>>(input, output, N, D);
     cudaDeviceSynchronize();
 }
