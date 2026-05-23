@@ -1,0 +1,7 @@
+Hypothesis: Remove mask and other= parameters from loads/stores when D is power-of-2 (BLOCK_SIZE==D, mask always True)
+Rationale : v0 uses masked loads with other=0.0 even though D=1024 is power-of-2 and BLOCK_SIZE=1024=D,
+            meaning the mask is always True. The mask check and other-value clamping add overhead:
+            predicate evaluation per load/store, register holding neutral value. Removing them
+            allows the compiler to generate unmasked ld.global/st.global without predication,
+            potentially reducing instruction count and register pressure.
+Expected  : Registers/thread ↓ slightly, IPC ↑, latency ↓ 2-5%.

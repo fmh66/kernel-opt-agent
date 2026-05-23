@@ -1,0 +1,7 @@
+Hypothesis: ROWS_PER_BLOCK=2 (milder than v1's ROWS_PER_BLOCK=4) to halve gamma/beta global loads while maintaining adequate occupancy
+Rationale : v0 Memory-Bound at 84.72%, Long Scoreboard 63.88%. Gamma/beta are 8KB loaded redundantly 1024x
+            (8MB wasted). v1 ROWS=4 collapsed occupancy (32%, grid 256). v2 num_warps=8 increased reduction
+            overhead (bank conflicts +83%). ROWS=2 strikes a balance: grid=512 (2x v1), 50% theoretical occupancy,
+            gamma/beta traffic halved (4MB savings). Fewer threads than v2 avoids bank conflict overhead,
+            more blocks than v1 avoids occupancy collapse.
+Expected  : Memory SOL ↓ to 70-75%, Long Scoreboard ↓ to 45-55%, latency ↓ 10-15%.

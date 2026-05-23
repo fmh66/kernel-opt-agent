@@ -922,5 +922,285 @@
     "outcome": "success",
     "speedup": 1.31,
     "notes": "1.31x speedup vs best prior (v3: 0.6842→0.5232ms). FFMA throughput jumped 862→1175/cycle (36% more). Each thread does 2x FMAs, better ILP. Global Load Efficiency 100→67% (non-coalesced B loads) but compute gain dominates. Overall 1.80x from v0 baseline."
+  },
+  {
+    "id": 34,
+    "date": "2026-05-23",
+    "iteration": "v1",
+    "kernel": "layernorm",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "N=10240,D=10240",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "Long Scoreboard",
+    "metrics_before": {
+      "memory_sol_pct": 94.05,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8776,
+      "achieved_occupancy": 92.42
+    },
+    "metrics_after": {
+      "memory_sol_pct": 94.44,
+      "sm_sol_pct": null,
+      "latency_ms": 1.864,
+      "achieved_occupancy": 32.62
+    },
+    "optimization": "1-warp-per-row warp-shuffle reduction, zero shared memory",
+    "hypothesis": "Use 1-warp-per-row (32 threads/block) with no shared memory — all reduction via warp shuffle — to eliminate both __syncthreads() barriers, while increasing block-level parallelism.",
+    "outcome": "neutral",
+    "speedup": 1.01,
+    "notes": "Barrier 0% but registers 40→46, occupancy 92%→33%, essentially neutral (0.7% improvement)"
+  },
+  {
+    "id": 35,
+    "date": "2026-05-23",
+    "iteration": "v2",
+    "kernel": "layernorm",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "N=10240,D=10240",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "Long Scoreboard",
+    "metrics_before": {
+      "memory_sol_pct": 94.44,
+      "sm_sol_pct": null,
+      "latency_ms": 1.864,
+      "achieved_occupancy": 32.62
+    },
+    "metrics_after": {
+      "memory_sol_pct": 94.41,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8565,
+      "achieved_occupancy": 64.7
+    },
+    "optimization": "64 threads/block (2 warps), single-thread shared memory write",
+    "hypothesis": "Use 64 threads/block (2 warps) as middle ground — cross-warp reduction simplified to adding two values, barrier overhead should be much lower than v0's 8-warps while occupancy stays higher than v1's single warp.",
+    "outcome": "neutral",
+    "speedup": 1.0,
+    "notes": "Barrier 0.25% (near zero), Occ 65%, registers 40 (back to v0 level). 1.1% improvement over v0 but essentially neutral. Network remains memory-bound at 94.4% SOL."
+  },
+  {
+    "id": 36,
+    "date": "2026-05-23",
+    "iteration": "v3",
+    "kernel": "layernorm",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "N=10240,D=10240",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "Long Scoreboard",
+    "metrics_before": {
+      "memory_sol_pct": 94.41,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8565,
+      "achieved_occupancy": 64.7
+    },
+    "metrics_after": {
+      "memory_sol_pct": 93.71,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8575,
+      "achieved_occupancy": 95.42
+    },
+    "optimization": "128 threads/block (4 warps), cross-warp reduction summing 4 values",
+    "hypothesis": "Try 128 threads/block (4 warps) to explore optimal occupancy vs barrier tradeoff. Four warps should give ~75% occupancy with barrier ~5-8%.",
+    "outcome": "neutral",
+    "speedup": 1.0,
+    "notes": "Occupancy 95% (back to v0 level), Barrier 8.6%, Long Scoreboard 262.5% (highest). Performance identical to v2/v1/v0. Confirms memory bandwidth is sole bottleneck."
+  },
+  {
+    "id": 37,
+    "date": "2026-05-23",
+    "iteration": "v4",
+    "kernel": "layernorm",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "N=10240,D=10240",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "Long Scoreboard",
+    "metrics_before": {
+      "memory_sol_pct": 93.71,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8575,
+      "achieved_occupancy": 95.42
+    },
+    "metrics_after": {
+      "memory_sol_pct": 94.16,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8568,
+      "achieved_occupancy": 65.09
+    },
+    "optimization": "__ldg read-only cache intrinsic for all input loads on v2 base",
+    "hypothesis": "Use __ldg for all input reads to route through texture/read-only cache path for better L1 persistence across the two passes.",
+    "outcome": "neutral",
+    "speedup": 1.0,
+    "notes": "L1 hit rate 33.3% (vs v2's 33.4%), essentially identical. Compiler already optimized caching for const __restrict__ pointers. __ldg redundant."
+  },
+  {
+    "id": 38,
+    "date": "2026-05-23",
+    "iteration": "v5",
+    "kernel": "layernorm",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "N=10240,D=10240",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "Long Scoreboard",
+    "metrics_before": {
+      "memory_sol_pct": 94.16,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8568,
+      "achieved_occupancy": 65.09
+    },
+    "metrics_after": {
+      "memory_sol_pct": 94.03,
+      "sm_sol_pct": null,
+      "latency_ms": 1.8675,
+      "achieved_occupancy": 65.02
+    },
+    "optimization": "Fused scale/shift precomputation — replace (v-mean)*inv_std*gamma+beta with v*s + shift where s=inv_std*gamma, shift=beta-mean*s",
+    "hypothesis": "Precompute fused scale and shift per float4 to reduce inner loop from 4 ops to 2 ops, scheduling precomputation in parallel with input loads.",
+    "outcome": "neutral",
+    "speedup": 0.99,
+    "notes": "FFMA throughput +57% (52→82), FADD -43% (69→39), Regs 40→39. Slight regression (0.6%) — fused math converts to FMAs but kernel remains memory-bound at 94% SOL."
+  },
+  {
+    "id": 39,
+    "date": "2026-05-23",
+    "iteration": "—",
+    "kernel": "mean_reduction",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "",
+    "bottleneck_before": "memory",
+    "dominant_stall": "",
+    "metrics_before": {
+      "memory_sol_pct": null,
+      "sm_sol_pct": null,
+      "latency_ms": 3.1043,
+      "achieved_occupancy": null
+    },
+    "metrics_after": {
+      "memory_sol_pct": null,
+      "sm_sol_pct": null,
+      "latency_ms": 2.826,
+      "achieved_occupancy": null
+    },
+    "optimization": "",
+    "hypothesis": "4-way ILP with independent accumulators per column to hide global load latency",
+    "outcome": "success",
+    "speedup": 1.1,
+    "notes": "9.9% speedup. FMA utilization doubled. Long Scoreboard stall dropped slightly."
+  },
+  {
+    "id": 40,
+    "date": "2026-05-23",
+    "iteration": "—",
+    "kernel": "mean_reduction",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "",
+    "metrics_before": {
+      "memory_sol_pct": 3.39,
+      "sm_sol_pct": null,
+      "latency_ms": 2.826,
+      "achieved_occupancy": null
+    },
+    "metrics_after": {
+      "memory_sol_pct": 69.67,
+      "sm_sol_pct": null,
+      "latency_ms": 0.1513,
+      "achieved_occupancy": null
+    },
+    "optimization": "",
+    "hypothesis": "Split D2 dimension across multiple blocks (TILE_D2=256) to increase GPU parallelism",
+    "outcome": "success",
+    "speedup": 18.68,
+    "notes": "18.7x speedup. Grid 1→16 blocks, Memory SOL 3.39%→69.67%, clearly memory-bound. Long Scoreboard 16.89%→11.71%."
+  },
+  {
+    "id": 41,
+    "date": "2026-05-23",
+    "iteration": "—",
+    "kernel": "mean_reduction",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "",
+    "metrics_before": {
+      "memory_sol_pct": 69.67,
+      "sm_sol_pct": null,
+      "latency_ms": 0.1513,
+      "achieved_occupancy": null
+    },
+    "metrics_after": {
+      "memory_sol_pct": 48.39,
+      "sm_sol_pct": null,
+      "latency_ms": 0.2099,
+      "achieved_occupancy": null
+    },
+    "optimization": "",
+    "hypothesis": "8-way ILP to further reduce inner loop overhead and increase in-flight loads",
+    "outcome": "failure",
+    "speedup": 0.72,
+    "notes": "38.7% regression. 8-way ILP increased address computation overhead, Memory SOL dropped 69→48%, Long Scoreboard increased 11.7→17.9%. 4-way ILP is the sweet spot."
+  },
+  {
+    "id": 42,
+    "date": "2026-05-23",
+    "iteration": "—",
+    "kernel": "mean_reduction",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "",
+    "metrics_before": {
+      "memory_sol_pct": 69.67,
+      "sm_sol_pct": null,
+      "latency_ms": 0.1513,
+      "achieved_occupancy": null
+    },
+    "metrics_after": {
+      "memory_sol_pct": 68.72,
+      "sm_sol_pct": null,
+      "latency_ms": 0.1523,
+      "achieved_occupancy": null
+    },
+    "optimization": "",
+    "hypothesis": "Pointer arithmetic (pre-computed pointers+stride) to reduce address computation overhead",
+    "outcome": "neutral",
+    "speedup": 0.99,
+    "notes": "Essentially no change. Compiler already optimized the indexed access into pointer increments. IPC similar (0.1419→0.1532)."
+  },
+  {
+    "id": 43,
+    "date": "2026-05-23",
+    "iteration": "—",
+    "kernel": "mean_reduction",
+    "backend": "cuda",
+    "chip": "sm_86",
+    "dims": "",
+    "bottleneck_before": "memory_bound",
+    "dominant_stall": "",
+    "metrics_before": {
+      "memory_sol_pct": 69.67,
+      "sm_sol_pct": null,
+      "latency_ms": 0.1513,
+      "achieved_occupancy": null
+    },
+    "metrics_after": {
+      "memory_sol_pct": 56.96,
+      "sm_sol_pct": null,
+      "latency_ms": 0.1819,
+      "achieved_occupancy": null
+    },
+    "optimization": "",
+    "hypothesis": "Increase block size from 256 to 512 threads for better per-SM latency hiding",
+    "outcome": "failure",
+    "speedup": 0.83,
+    "notes": "20% regression at B=1. Grid 16→8 blocks, fewer SMs utilized. Per-SM occupancy improved (16.9→33.4%) but not enough to compensate for halving the active SMs. Long Scoreboard increased 11.7→18.5%."
   }
 ]

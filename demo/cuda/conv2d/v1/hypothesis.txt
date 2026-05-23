@@ -1,0 +1,3 @@
+Hypothesis: Shared memory tiling of input data — each block cooperatively loads the input tile (18x18 with halo for K=3) into shared memory once per input channel, so all 256 threads reuse the same data instead of redundant global loads.
+Rationale : v0 NCU shows L1 load bandwidth 5.18e12 vs DRAM 8.52e9 (608x ratio) — massive global memory thrashing from threads independently loading overlapping input data. Global Load Efficiency only 69.56%. Warp Exec Efficiency 28.04% from predicated loads. Shared memory tiling reduces global memory traffic ~7x by loading each input element once for the whole block.
+Expected  : L1 global load bandwidth ↓ significantly, Global Load Efficiency ↑, DRAM throughput stable, L1 Hit Rate ↑, Long Scoreboard stall ↓, latency ↓ 20-30%.

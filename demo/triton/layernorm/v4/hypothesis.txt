@@ -1,0 +1,7 @@
+Hypothesis: Make D a tl.constexpr to enable compile-time optimizations (reciprocal division, reduction unrolling)
+Rationale : v0 NCU shows the kernel is memory-bound (Memory SOL=84.72%), but WarpExecEff=32% and IPC=0.12
+            suggest inefficiency in the reduction computation. D is used for integer division (mean=sum/D,
+            var=sum_sq/D) — with runtime D, Triton generates expensive integer division. As constexpr,
+            the compiler can use multiply-by-reciprocal and better unroll the 1024-element reduction.
+            Same memory traffic as v0 but more efficient computation.
+Expected  : IPC ↑ modestly, latency ↓ 3-8%.

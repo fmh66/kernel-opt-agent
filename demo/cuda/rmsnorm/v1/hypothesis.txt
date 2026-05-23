@@ -1,0 +1,5 @@
+Hypothesis: float4 vectorized loads/stores to reduce memory instruction count and improve bandwidth utilization
+Rationale : v1 is Memory-Bound (78.39% memory throughput). Each thread processes 4 elements via scalar loads.
+            float4 vectorization merges 4 scalar loads into a single 128-bit transaction, reducing load/store count 4×,
+            cutting loop overhead and potentially pushing memory throughput closer to peak.
+Expected  : Memory Throughput ↑ closer to 90%, IPC ↑, latency ↓ 10-20%.

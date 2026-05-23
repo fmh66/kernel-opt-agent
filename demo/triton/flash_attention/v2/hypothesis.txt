@@ -1,0 +1,8 @@
+Hypothesis: Increase BLOCK_N from 64 to 128 to halve inner loop iterations and improve compute intensity
+Rationale : v0 NCU shows Long Scoreboard stall=1.406 (memory latency dominant). BLOCK_N=64 means 64 inner loop iterations,
+            each loading 64x64=4K K elements. With BLOCK_N=128, iterations halve to 32, each loading 128x64=8K K elements.
+            Fewer iterations reduce load instruction overhead and loop control overhead.
+            Larger K/V tiles improve compute intensity per memory load (more flops per byte).
+            Past experience warns against killing pipelining with too-large tiles, but BLOCK_N=128 is moderate.
+Expected  : Memory SOL ↓ to 70-80%, Long Scoreboard stall ↓, latency ↓ 15-25%.
+            Halving inner iterations reduces load overhead proportionally.

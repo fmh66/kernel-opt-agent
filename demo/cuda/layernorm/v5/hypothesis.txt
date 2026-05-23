@@ -1,0 +1,3 @@
+Hypothesis: Increase block size from 256 to 512 to reduce per-thread loop iterations and improve L2 cache behavior
+Rationale : v2 at Memory SOL=93.93%. With 512 threads/block, each thread processes D/512=20 elements instead of 40, reducing loop iterations by half. Fewer total warps might improve cache locality. However, larger blocks mean more warps per block → higher __syncthreads() overhead.
+Expected  : Modest latency improvement (2-5%) or neutral. Barrier stall may increase.

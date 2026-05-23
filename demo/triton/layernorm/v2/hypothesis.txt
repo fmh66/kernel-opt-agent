@@ -1,0 +1,7 @@
+Hypothesis: Increase num_warps from 4 (default) to 8 to double wave parallelism and hide memory latency
+Rationale : v0 NCU shows Memory-Bound with Long Scoreboard stall=63.88%, waves/SM=1.02 (barely 1 wave).
+            v1 showed that reducing grid kills occupancy, so we must keep the full grid (1024) and instead
+            increase parallelism per block. num_warps=8 (256 threads/block) doubles total warps (4096→8192),
+            increasing waves/SM to ~2.0 and providing more warps for the SM to context-switch to when one
+            hits a long scoreboard stall. Same memory traffic as v0 but better latency hiding.
+Expected  : Waves/SM ↑ to ~2.0, Long Scoreboard stall ↓ below 50%, latency ↓ 10-20%.

@@ -1,0 +1,9 @@
+Hypothesis: Reduce BLOCK_M from 64 to 32 to cut register pressure, increase occupancy, and improve latency hiding
+Rationale : v0 NCU shows 204 regs/thread, 16.5% occupancy. v2 (BLOCK_N=128) and v4 (BLOCK_M=128) both
+            increased registers to 255 and halved occupancy. Reducing BLOCK_M should halve accumulator
+            (32x64=2048 vs 64x64=4096 elements), cutting register pressure. Higher occupancy allows
+            more warps to hide memory latency (Long Scoreboard stall=1.406 in v0).
+            Grid doubles to 6144 programs, doubling total K/V traffic, but lower register pressure
+            and higher occupancy should offset this.
+Expected  : Registers/Thread ↓ to 128-150, Occupancy ↑ to 25-33%, Long Scoreboard stall ↓.
+            Latency may stay similar if memory bandwidth remains saturated.
