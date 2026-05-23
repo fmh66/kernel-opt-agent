@@ -1,0 +1,6 @@
+Hypothesis: Add tl.max_contiguous and tl.multiple_of compiler hints to enable wider vectorized loads and better prefetch patterns
+Rationale : v0 is memory-bound (86% SOL) with 100% coalesced access but still has 92% Long Scoreboard stall.
+            Compiler hints let Triton's PTX backend emit wider loads (LDG.128 vs LDG.32) and optimize prefetch,
+            potentially squeezing more effective bandwidth out of the same memory transactions.
+            Reverting to single-row processing (grid=1024) to maintain 100% occupancy.
+Expected  : Memory SOL stable or slight ↓, Long Scoreboard stall ↓ 5-10%, latency ↓ 5-10%.

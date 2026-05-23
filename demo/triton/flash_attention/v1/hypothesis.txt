@@ -1,0 +1,6 @@
+Hypothesis: Add query-side tiling with BLOCK_I=8, each program processes 8 Q tiles, reuses K/V loads through L2 cache
+Rationale : v0 NCU shows Memory SOL=89.7%, L2 Hit Rate=17.5% (very low). Each of 3072 programs loads entire K/V independently.
+            Past experience (id=27) shows query-side tiling gave 13.6x speedup for similar flash_attention kernel on sm_86.
+            With BLOCK_I=8, 8 Q tiles share K/V loads via L2 cache persistence, improving L2 hit rate and reducing effective DRAM bandwidth.
+Expected  : Memory SOL ↓ to 60-80%, L2 Hit Rate ↑ significantly, latency ↓ 30-50%.
+            Grid shrinks from 3072→384 programs (B*H*ceil(N/(BLOCK_M*BLOCK_I))), reducing launch overhead.

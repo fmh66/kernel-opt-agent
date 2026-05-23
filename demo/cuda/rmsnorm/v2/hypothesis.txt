@@ -1,0 +1,4 @@
+Hypothesis: float4 vectorized loads/stores to reduce memory instruction count
+Rationale : v1 is Memory-Bound (78.4%). float4 merges 4 scalar loads into one 128-bit transaction, reducing instruction count 4×.
+Expected  : Memory Throughput ↑, latency ↓ 10-20%.
+Result    : Neutral (3.6%, ~noise). IPC dropped 0.254→0.164, Long Scoreboard ↑ 23.3%→41.3%. float4 unpacking overhead negated vectorization benefit. Kernel was already at coalescing limit.

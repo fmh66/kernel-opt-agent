@@ -1,0 +1,3 @@
+Hypothesis: Enable --use_fast_math compiler flag (-ftz=true, -prec-div=false, -fmad=true) on the v3 kernel to allow the compiler to contract more mul+add operations into FMAD, reduce register pressure, and generate more efficient instruction scheduling.
+Rationale : v3 NCU shows SM at 98% (near peak), but 48 registers limit theoretical occupancy to 83%. --use_fast_math enables aggressive compiler optimizations like FMAD contraction which can reduce register live ranges and instruction count, potentially improving both occupancy and IPC.
+Expected  : Register count ↓, Occupancy ↑, FFMA throughput ↑, latency ↓ 5-10%. Must re-validate numerical correctness since fast-math can change floating-point behavior.

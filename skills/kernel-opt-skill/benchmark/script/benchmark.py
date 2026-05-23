@@ -2,7 +2,7 @@
 """Benchmark CUDA/Triton kernel vs PyTorch reference (eager + compile).
 
 Compares performance of a custom kernel against a PyTorch reference
-using CUDA event timing and nsight-python hardware metrics.
+using triton.testing.do_bench timing.
 
 Reference .py must define `reference(**kwargs)` — in-place, PyTorch tensors.
 CUDA solution: .cu exposing `extern "C" void solve(...)`.
@@ -10,7 +10,7 @@ Triton solution: .py defining `setup(**kwargs)` and `run_kernel(**kwargs)`.
 
 Usage:
     python benchmark.py solution.cu --ref=ref.py --output-dir=./out --M=1024 --N=1024
-    python benchmark.py solution.cu --ref=ref.py --output-dir=./out --skip-nsight --M=4096 --N=4096
+    python benchmark.py solution.cu --ref=ref.py --output-dir=./out --M=4096 --N=4096
 """
 
 import argparse
@@ -25,8 +25,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 import torch
-
-import nsight
+from triton.testing import do_bench
 
 # ---------------------------------------------------------------------------
 # Type tables for parsing extern "C" void solve(...)
@@ -280,112 +279,63 @@ def _setup_solution(solution_file, backend, dim_values, ptr_size_override, arch,
 # ---------------------------------------------------------------------------
 
 def _make_torch_fns(ref_fn, ref_inputs_snapshot, output_names):
-    """Build eager/compile timing closures that clone inputs each call."""
+    """Build PyTorch timing closures.
+
+    The default eager/compiled closures reuse static CUDA tensors so their timing
+    is comparable with custom kernels that run in-place on preallocated buffers.
+    """
     compile_fn = torch.compile(ref_fn, dynamic=False)
 
-    def eager():
-        cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
-        ref_fn(**_prepare_reference_call_inputs(cloned, output_names))
+    eager_static_inputs = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
+    compile_static_inputs = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
 
-    def compiled():
-        cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
-        compile_fn(**_prepare_reference_call_inputs(cloned, output_names))
+    def eager_static():
+        ref_fn(**_prepare_reference_call_inputs(eager_static_inputs, output_names))
 
-    return eager, compiled, compile_fn
+    def compiled_static():
+        compile_fn(**_prepare_reference_call_inputs(compile_static_inputs, output_names))
+
+    return eager_static, compiled_static, compile_fn
 
 
 # ---------------------------------------------------------------------------
-# NSight metrics
+# Timing
 # ---------------------------------------------------------------------------
 
-BENCH_METRICS = [
-    "sm__throughput.avg.pct_of_peak_sustained_elapsed",
-    "dram__throughput.avg.pct_of_peak_sustained_elapsed",
-    "dram__bytes.sum.per_second",
-    "sm__warps_active.avg.pct_of_peak_sustained_active",
-]
+def _summarize_times(times):
+    if not times:
+        return {
+            "mean": 0.0,
+            "std": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+        }
+    return {
+        "mean": statistics.mean(times),
+        "std": statistics.stdev(times) if len(times) > 1 else 0.0,
+        "median": statistics.median(times),
+        "min": min(times),
+        "max": max(times),
+    }
 
-METRIC_LABELS = {
-    "sm__throughput.avg.pct_of_peak_sustained_elapsed":  "SM Throughput (% peak)",
-    "dram__throughput.avg.pct_of_peak_sustained_elapsed":"Memory Throughput (% peak)",
-    "dram__bytes.sum.per_second":                        "DRAM Bandwidth (bytes/s)",
-    "sm__warps_active.avg.pct_of_peak_sustained_active": "Achieved Occupancy (%)",
-}
+
+def _bench_times(fn, warmup_ms, rep_ms):
+    times = do_bench(fn, warmup=warmup_ms, rep=rep_ms, return_mode="all")
+    return [float(v) for v in times]
 
 
-def profile_nsight(fn, warmup, replay_mode="kernel"):
-    metrics = list(dict.fromkeys(BENCH_METRICS))
-
-    @nsight.analyze.kernel(
-        metrics=metrics,
-        runs=1,
-        output="quiet",
-        output_csv=False,
-        clock_control="none",
-        cache_control="all",
-        replay_mode=replay_mode,
+def _run_variant(label, fn, warmup, iters):
+    """Time fn with triton.testing.do_bench."""
+    print(f"[timing] {label} (do_bench warmup={warmup} ms, rep={iters} ms)...")
+    times = _bench_times(fn, warmup, iters)
+    stats = _summarize_times(times)
+    ms, std = stats["mean"], stats["std"]
+    print(
+        f"[timing] {label} : mean {ms:.4f} ms ± {std:.4f} ms, "
+        f"median {stats['median']:.4f} ms, min {stats['min']:.4f} ms, max {stats['max']:.4f} ms"
     )
-    def _run(n_warmup):
-        for _ in range(n_warmup):
-            fn()
-        torch.cuda.synchronize()
-        with nsight.annotate("benchmark"):
-            fn()
-
-    return _run(warmup).to_dataframe()
-
-
-def _get_metric(df, name):
-    for _, row in df.iterrows():
-        if row.get("Metric") == name:
-            return row.get("AvgValue")
-    return None
-
-
-def _fmt(v):
-    if v is None:
-        return "N/A"
-    if isinstance(v, float):
-        return f"{v:.2e}" if abs(v) > 1e6 else f"{v:.4f}"
-    return str(v)
-
-
-# ---------------------------------------------------------------------------
-# Timing & profiling
-# ---------------------------------------------------------------------------
-
-def time_kernel(fn, warmup, iters):
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    times = []
-    for _ in range(iters):
-        start.record()
-        fn()
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-    return statistics.mean(times), (statistics.stdev(times) if len(times) > 1 else 0.0), times
-
-
-def _run_variant(label, fn, warmup, iters, skip_nsight, under_nsight, replay_mode="kernel"):
-    """Time fn and optionally collect nsight metrics. Returns (ms, std, df)."""
-    ms, std = 0.0, 0.0
-    if not under_nsight:
-        print(f"[timing] {label} ({warmup} warmup, {iters} iters)...")
-        ms, std, _ = time_kernel(fn, warmup, iters)
-        print(f"[timing] {label} : {ms:.4f} ms ± {std:.4f} ms")
-    df = None
-    if not skip_nsight:
-        if not under_nsight:
-            print(f"[nsight] profiling {label}...")
-        try:
-            df = profile_nsight(fn, warmup, replay_mode=replay_mode)
-        except Exception as exc:
-            print(f"[nsight] {label} profiling failed: {exc}", file=sys.stderr)
-    return ms, std, df
+    return ms, std, stats
 
 
 # ---------------------------------------------------------------------------
@@ -432,11 +382,27 @@ def _run_correctness(label, sol_tensors, ref_inputs_snapshot, ref_fn, compile_fn
 # ---------------------------------------------------------------------------
 
 def build_report(solution_file, ref_file, dim_values, arch,
-                 sol_ms, sol_std, sol_df,
-                 torch_eager_ms, torch_eager_std, torch_eager_df,
-                 torch_compile_ms, torch_compile_std, torch_compile_df,
-                 correctness_pass):
+                 sol_ms, sol_std,
+                 torch_eager_ms, torch_eager_std,
+                 torch_compile_ms, torch_compile_std,
+                 correctness_pass,
+                 sol_stats=None, torch_eager_stats=None, torch_compile_stats=None):
     gpu = torch.cuda.get_device_name(torch.cuda.current_device())
+    sol_stats = sol_stats or {"mean": sol_ms, "std": sol_std, "median": sol_ms, "min": sol_ms, "max": sol_ms}
+    torch_eager_stats = torch_eager_stats or {
+        "mean": torch_eager_ms,
+        "std": torch_eager_std,
+        "median": torch_eager_ms,
+        "min": torch_eager_ms,
+        "max": torch_eager_ms,
+    }
+    torch_compile_stats = torch_compile_stats or {
+        "mean": torch_compile_ms,
+        "std": torch_compile_std,
+        "median": torch_compile_ms,
+        "min": torch_compile_ms,
+        "max": torch_compile_ms,
+    }
 
     lines = [
         "# Benchmark Report",
@@ -449,36 +415,28 @@ def build_report(solution_file, ref_file, dim_values, arch,
         f"| **Arch** | {arch} |",
         f"| **Dims** | {dim_values} |",
         f"| **Correctness** | {'PASS' if correctness_pass else 'FAIL'} |",
+        "| **Timing Scope** | Steady-state `triton.testing.do_bench` on preallocated/static tensors |",
+        "| **Timing Note** | Solution and PyTorch baselines exclude per-call input cloning. |",
         "",
-        "## Timing (CUDA Events)",
+        "## Timing (triton.testing.do_bench)",
         "",
         "| Metric | Solution | PyTorch Eager | PyTorch Compile |",
         "|--------|----------:|-------------:|----------------:|",
-        f"| Execution Time (ms) | {sol_ms:.4f} | {torch_eager_ms:.4f} | {torch_compile_ms:.4f} |",
-        f"| Std dev (ms)        | {sol_std:.4f} | {torch_eager_std:.4f} | {torch_compile_std:.4f} |",
+        f"| Mean Time (ms)      | {sol_stats['mean']:.4f} | {torch_eager_stats['mean']:.4f} | {torch_compile_stats['mean']:.4f} |",
+        f"| Median Time (ms)    | {sol_stats['median']:.4f} | {torch_eager_stats['median']:.4f} | {torch_compile_stats['median']:.4f} |",
+        f"| Min Time (ms)       | {sol_stats['min']:.4f} | {torch_eager_stats['min']:.4f} | {torch_compile_stats['min']:.4f} |",
+        f"| Max Time (ms)       | {sol_stats['max']:.4f} | {torch_eager_stats['max']:.4f} | {torch_compile_stats['max']:.4f} |",
+        f"| Std dev (ms)        | {sol_stats['std']:.4f} | {torch_eager_stats['std']:.4f} | {torch_compile_stats['std']:.4f} |",
     ]
-    for label, base_ms in (("vs PyTorch Eager", torch_eager_ms), ("vs PyTorch Compile", torch_compile_ms)):
-        speedup = base_ms / sol_ms if sol_ms > 0 else float("inf")
-        lines.append(f"| Speedup ({label})    | {speedup:.2f}x | — | — |")
+    for label, base_stats in (
+        ("vs PyTorch Eager", torch_eager_stats),
+        ("vs PyTorch Compile", torch_compile_stats),
+    ):
+        mean_speedup = base_stats["mean"] / sol_stats["mean"] if sol_stats["mean"] > 0 else float("inf")
+        median_speedup = base_stats["median"] / sol_stats["median"] if sol_stats["median"] > 0 else float("inf")
+        lines.append(f"| Speedup ({label}, mean)   | {mean_speedup:.2f}x | - | - |")
+        lines.append(f"| Speedup ({label}, median) | {median_speedup:.2f}x | - | - |")
     lines.append("")
-
-    dfs = {
-        "Solution": sol_df,
-        "PyTorch Eager": torch_eager_df,
-        "PyTorch Compile": torch_compile_df,
-    }
-    available = {k: v for k, v in dfs.items() if v is not None}
-    if available:
-        lines += [
-            "## Hardware Metrics (nsight-python)",
-            "",
-            "| Metric | " + " | ".join(available.keys()) + " |",
-            "|--------|" + "|".join(["----------:" for _ in available]) + "|",
-        ]
-        for metric, label in METRIC_LABELS.items():
-            vals = [_fmt(_get_metric(df, metric)) for df in available.values()]
-            lines.append(f"| {label} | " + " | ".join(vals) + " |")
-        lines.append("")
 
     return "\n".join(lines)
 
@@ -501,9 +459,9 @@ def main():
     parser.add_argument("--output-dir", type=str, required=True,
                         help="Directory for output files")
     parser.add_argument("--warmup", type=int, default=20,
-                        help="Warmup iterations (default: 20)")
+                        help="do_bench warmup duration in milliseconds (default: 20)")
     parser.add_argument("--iters", type=int, default=100,
-                        help="Timing iterations for CUDA event measurement (default: 100)")
+                        help="do_bench repetition duration in milliseconds (default: 100)")
     parser.add_argument("--ptr-size", type=int, default=0,
                         help="Override element count for pointer buffers")
     parser.add_argument("--arch", type=str, default="",
@@ -512,8 +470,6 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--atol", type=float, default=1e-4, help="Correctness atol (default: 1e-4)")
     parser.add_argument("--rtol", type=float, default=1e-3, help="Correctness rtol (default: 1e-3)")
-    parser.add_argument("--skip-nsight", action="store_true",
-                        help="Skip nsight hardware profiling; only run CUDA event timing")
 
     args, unknown = parser.parse_known_args()
     dim_values = _parse_dim_values(unknown)
@@ -525,14 +481,6 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # nsight re-launches the whole process to inject the profiler;
-    # lightweight logging-only work in those child processes
-    under_nsight = (
-        "CUDA_INJECTION64_PATH" in os.environ
-        or "NV_NSIGHT_INJECTION64_PATH" in os.environ
-        or any(k.startswith("NV_NSIGHT_") for k in os.environ)
-    )
-
     # --- setup ----------------------------------------------------------
 
     state = _setup_solution(solution_file, args.backend, dim_values,
@@ -541,40 +489,38 @@ def main():
     inputs_snapshot = {k: _clone_value(v) for k, v in state.ref_inputs.items()}
 
     sol_fn = state.callable
-    torch_eager_fn, torch_compile_fn_timing, torch_compile_ref = _make_torch_fns(
+    (
+        torch_eager_fn,
+        torch_compile_fn_timing,
+        torch_compile_ref,
+    ) = _make_torch_fns(
         ref_mod.reference, inputs_snapshot, state.output_names)
 
-    if not under_nsight:
-        print(f"[benchmark] solution  : {solution_file}")
-        print(f"[benchmark] backend   : {state.backend}")
-        print(f"[benchmark] reference : {ref_file}")
-        print(f"[benchmark] arch      : {arch}")
-        print(f"[benchmark] dims      : {dim_values}")
-        print()
+    print(f"[benchmark] solution  : {solution_file}")
+    print(f"[benchmark] backend   : {state.backend}")
+    print(f"[benchmark] reference : {ref_file}")
+    print(f"[benchmark] arch      : {arch}")
+    print(f"[benchmark] dims      : {dim_values}")
+    print()
 
     # --- correctness ----------------------------------------------------
 
-    ok = True
-    if not under_nsight:
-        sol_fn()
-        torch.cuda.synchronize()
-        ok = _run_correctness(
-            "solution", state.tensors, inputs_snapshot,
-            ref_mod.reference, torch_compile_ref,
-            state.output_names, args.atol, args.rtol,
-        )
+    sol_fn()
+    torch.cuda.synchronize()
+    ok = _run_correctness(
+        "solution", state.tensors, inputs_snapshot,
+        ref_mod.reference, torch_compile_ref,
+        state.output_names, args.atol, args.rtol,
+    )
 
-    # --- timing & nsight ------------------------------------------------
+    # --- timing ---------------------------------------------------------
 
-    sol_ms, sol_std, sol_df = _run_variant(
-        "Solution", sol_fn, args.warmup, args.iters, args.skip_nsight, under_nsight)
-    torch_eager_ms, torch_eager_std, torch_eager_df = _run_variant(
-        "PyTorch eager", torch_eager_fn, args.warmup, args.iters, args.skip_nsight, under_nsight)
-    torch_compile_ms, torch_compile_std, torch_compile_df = _run_variant(
-        "PyTorch compile", torch_compile_fn_timing, args.warmup, args.iters, args.skip_nsight, under_nsight)
-
-    if under_nsight:
-        return 0
+    sol_ms, sol_std, sol_stats = _run_variant(
+        "Solution", sol_fn, args.warmup, args.iters)
+    torch_eager_ms, torch_eager_std, torch_eager_stats = _run_variant(
+        "PyTorch eager", torch_eager_fn, args.warmup, args.iters)
+    torch_compile_ms, torch_compile_std, torch_compile_stats = _run_variant(
+        "PyTorch compile", torch_compile_fn_timing, args.warmup, args.iters)
 
     # --- report ---------------------------------------------------------
 
@@ -583,12 +529,13 @@ def main():
         ref_file=ref_file,
         dim_values=dim_values,
         arch=arch,
-        sol_ms=sol_ms, sol_std=sol_std, sol_df=sol_df,
+        sol_ms=sol_ms, sol_std=sol_std,
         torch_eager_ms=torch_eager_ms, torch_eager_std=torch_eager_std,
-        torch_eager_df=torch_eager_df,
         torch_compile_ms=torch_compile_ms, torch_compile_std=torch_compile_std,
-        torch_compile_df=torch_compile_df,
         correctness_pass=ok,
+        sol_stats=sol_stats,
+        torch_eager_stats=torch_eager_stats,
+        torch_compile_stats=torch_compile_stats,
     )
     report_path = output_dir / "benchmark.md"
     report_path.write_text(report, encoding="utf-8")

@@ -1,0 +1,8 @@
+Hypothesis: Switch from one-thread-per-row to one-block-per-row with warp-level reductions for coalesced memory access
+Rationale : v0 NCU shows Global Load/Store Efficiency=12.5%, Long Scoreboard stall=56.07%, Achieved Occupancy=16.52% with only 4 blocks.
+            Each thread processes an entire row sequentially; threads in the same warp access elements separated by stride-D=1024,
+            causing worst-case uncoalesced access (4 bytes used per 32-byte sector). One block per row enables warp-cooperative
+            reductions where consecutive threads access consecutive elements → 100% coalescing.
+            Grid size increases from 4 to 1024 blocks → full GPU utilization.
+Expected  : Global Load/Store Efficiency ↑ to >80%, Long Scoreboard stall ↓ <30%, Achieved Occupancy ↑ >50%,
+            latency ↓ 70-85% (matching prior 7.7x result on similar kernel)

@@ -1,0 +1,97 @@
+# NCU Profile Summary
+
+| Field | Value |
+|-------|-------|
+| **Kernel** | v0.cu |
+| **GPU** | NVIDIA RTX A6000 |
+| **Arch** | sm_86 |
+| **Dims** | {'N': 10240, 'D': 10240} |
+| **Execution Time** | 8.5155 ms ± 0.0267 ms |
+
+## Speed of Light
+
+| Metric | Value |
+|--------|------:|
+| SM Throughput (% of peak) | 2.9059 |
+| Memory Throughput (% of peak) | 27.4327 |
+
+## Memory Workload Analysis
+
+| Metric | Value |
+|--------|------:|
+| DRAM Total Bandwidth (bytes/s) | 2.00e+11 |
+| DRAM Read Bandwidth (bytes/s) | 1.50e+11 |
+| DRAM Write Bandwidth (bytes/s) | 5.00e+10 |
+| L1 Global Load Bandwidth (bytes/s) | 1.22e+12 |
+| L1 Global Store Bandwidth (bytes/s) | 4.00e+11 |
+| L2 Total Bandwidth (bytes/s) | 5.55e+11 |
+| Global Load Efficiency (%) | 12.5000 |
+| Global Store Efficiency (%) | 12.5000 |
+| L1 Hit Rate (%) | 89.4972 |
+| L2 Hit Rate (%) | 72.9692 |
+
+## Compute Workload Analysis
+
+| Metric | Value |
+|--------|------:|
+| FMA Pipe Utilization (% of peak) | 0.7929 |
+| Tensor Core Utilization (% of peak) | 0.0000 |
+| IPC (instructions per cycle) | 0.0175 |
+
+## Occupancy
+
+| Metric | Value |
+|--------|------:|
+| Achieved Occupancy (%) | 16.6212 |
+| Theoretical Occupancy (%) | 100.0000 |
+
+## Launch Statistics
+
+| Metric | Value |
+|--------|------:|
+| Block Size | 256.0000 |
+| Grid Size | 40.0000 |
+| Registers / Thread | 40.0000 |
+| Static Shared Memory (bytes) | 0.0000 |
+| Dynamic Shared Memory (bytes) | 0.0000 |
+| Waves / SM | 0.0794 |
+
+## Scheduler Statistics
+
+| Metric | Value |
+|--------|------:|
+| Issue Slot Utilization (% of peak) | 1.7551 |
+| Eligible Warps / Cycle | 0.0213 |
+
+## Warp State / Stall Reasons
+
+| Metric | Value |
+|--------|------:|
+| Stall: Barrier | 0.0000 |
+| Stall: Long Scoreboard | 47.1086 |
+| Stall: Short Scoreboard | 0.0004 |
+| Stall: Math Pipe Throttle | 0.0001 |
+| Stall: Wait | 1.7108 |
+| Stall: No Instruction | 0.0286 |
+| Stall: Not Selected | 0.2112 |
+
+## Branch Divergence
+
+| Metric | Value |
+|--------|------:|
+| Branch Targets (total) | 621120.0000 |
+| Divergent Branch Targets (total) | 0.0000 |
+
+## Additional Pipe Utilization
+
+| Metric | Value |
+|--------|------:|
+| FADD Throughput (per cycle) | 19.5279 |
+| FMUL Throughput (per cycle) | 6.5091 |
+| FFMA Throughput (per cycle) | 13.0245 |
+| LSU Pipe Utilization (% of peak) | 1.5373 |
+| Warp Execution Efficiency | 32.0000 |
+| L1 Bank Conflicts (total) | 2.74e+08 |
+| Shared Memory Bandwidth (bytes/s) | 0.0000 |
+
+**Kernel name:** `naive_layernorm`

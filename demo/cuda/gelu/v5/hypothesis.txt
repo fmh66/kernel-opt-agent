@@ -1,0 +1,6 @@
+Hypothesis: Use grid-stride loop with fewer blocks to improve L2 cache locality and reduce launch overhead
+Rationale : v0 shows 0% L1 hit rate, 59.6% L2 hit rate with 400 blocks and single element per thread.
+            A grid-stride loop where each thread processes multiple elements can improve
+            temporal locality — elements processed by the same block stay in L2.
+            Using SM_COUNT blocks ensures every SM is occupied with sustained work.
+Expected  : L2 Hit Rate ↑, Long Scoreboard stall ↓, latency ↓ 10-20%.

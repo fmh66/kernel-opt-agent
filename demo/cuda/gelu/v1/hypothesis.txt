@@ -1,0 +1,6 @@
+Hypothesis: Decrease block size from 256 to 128 to increase grid parallelism for better latency hiding
+Rationale : v0 NCU shows Memory SOL=23.4%, SM SOL=9.0%, both below 40% → Latency-Bound.
+            Waves/SM=0.79 with 400 blocks — too few blocks to saturate 84 SMs.
+            Reducing block size to 128 doubles grid to 800 blocks, increasing waves/SM
+            and giving each SM more independent work to hide memory latency.
+Expected  : Waves/SM ↑ above 1.5, Long Scoreboard stall ↓, latency ↓ 15-25%.

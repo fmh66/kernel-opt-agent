@@ -1,6 +1,6 @@
 ---
 name: benchmark
-description: Benchmark a custom CUDA/Triton kernel against a reference implementation (PyTorch). Measures execution time via CUDA Events and collects hardware metrics via nsight-python.
+description: Benchmark a custom CUDA/Triton kernel against a reference implementation (PyTorch). Measures execution time via triton.testing.do_bench.
 ---
 
 # benchmark
@@ -20,11 +20,11 @@ benchmark/
 
 Compares solution kernel performance against PyTorch reference (both **eager** and **torch.compile**), outputting:
 
-- **Execution time** (CUDA Events, 100-iteration mean ± std) — 3-way comparison
-- **Hardware metrics** (nsight-python: SM throughput, memory throughput, DRAM bandwidth, Achieved Occupancy)
+- **Execution time** (`triton.testing.do_bench`, mean/median/min/max/std over raw samples) — 3-way comparison on preallocated/static tensors
 - **Correctness validation** (`torch.allclose` against both eager and compiled reference, run before timing)
 
-> Measurement strategy: execution time is collected via CUDA Events (unaffected by nsight replay); nsight is only used for hardware utilization metrics.
+> Measurement strategy: execution time is collected only via `triton.testing.do_bench`.
+> The default PyTorch baseline reuses static CUDA tensors so it is comparable to custom kernels running in-place on preallocated buffers.
 
 ---
 
@@ -50,8 +50,7 @@ python script/benchmark.py <solution.{cu,py}> \
     [--arch=<sm_XX>] \
     [--gpu=<id>] \
     [--atol=<atol>] [--rtol=<rtol>] \
-    [--seed=<seed>] \
-    [--skip-nsight]
+    [--seed=<seed>]
 ```
 
 ---
@@ -65,14 +64,13 @@ python script/benchmark.py <solution.{cu,py}> \
 | `--output-dir` | ✓ | — | Output directory |
 | `--M/--N/...` | ✓ | — | Integer dimension parameters from kernel signature |
 | `--backend` | | `auto` | `auto/cuda/triton` |
-| `--warmup` | | 20 | Warmup iterations before timing |
-| `--iters` | | 100 | CUDA Events timing iterations |
+| `--warmup` | | 20 | `do_bench` warmup duration in milliseconds |
+| `--iters` | | 100 | `do_bench` repetition duration in milliseconds |
 | `--ptr-size` | | 0 | Override CUDA pointer buffer element count (ignored for Triton) |
 | `--arch` | | auto-detected | e.g. `sm_90` |
 | `--gpu` | | 0 | GPU device index |
 | `--atol/--rtol` | | 1e-4/1e-3 | Correctness tolerance |
 | `--seed` | | 42 | Random seed |
-| `--skip-nsight` | | false | Skip nsight hardware metric collection; output execution time only |
 
 ---
 
@@ -80,4 +78,4 @@ python script/benchmark.py <solution.{cu,py}> \
 
 | File | Description |
 |---|---|
-| `benchmark.md` | 3-way comparison report: Solution vs PyTorch Eager vs PyTorch Compile, with correctness, execution time, speedup, and hardware metrics |
+| `benchmark.md` | 3-way comparison report: Solution vs PyTorch Eager vs PyTorch Compile, with correctness, steady-state execution time, and speedup |

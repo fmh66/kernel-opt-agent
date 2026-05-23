@@ -1,0 +1,7 @@
+Hypothesis: Compile with --use_fast_math to accelerate tanhf() and math operations via faster intrinsics
+Rationale : v0 NCU shows SM SOL=9.0%, Memory SOL=23.4% — the kernel is balanced between
+            memory and math. GELU involves tanhf() which uses SFU instructions.
+            --use_fast_math replaces standard math functions with faster intrinsics
+            (__tanhf, __fmaf_rn, etc.), flushes denormals, and enables fast division.
+            This should reduce math latency without affecting memory access pattern.
+Expected  : SM SOL ↑, IPC ↑, FMA Pipe Utilization ↑, latency ↓ 10-25%.

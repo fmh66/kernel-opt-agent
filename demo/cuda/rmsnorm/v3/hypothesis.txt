@@ -1,0 +1,4 @@
+Hypothesis: Reduce blockDim 256→128 to double waves/SM and hide memory latency
+Rationale : v1/v2 Long Scoreboard at 23-41%. Fewer threads/block → more blocks/SM → better latency hiding.
+Expected  : Waves/SM ↑, Long Scoreboard ↓, latency ↓ 10-20%.
+Result    : Neutral-regression. Waves/SM dropped 2.03→1.02 (fewer warps/block = less intra-block parallelism despite more blocks). Long Scoreboard ↑ 23%→46%. Block-level warp count matters more than block count for latency hiding.
