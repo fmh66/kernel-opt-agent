@@ -1,0 +1,19 @@
+{
+  "name": "kernel-opt-agent",
+  "description": "GPU kernel knowledge-base and profiling skills for CUDA, Triton, CuTe DSL, CUTLASS, and Nsight Compute workflows.",
+  "version": "0.1.0",
+  "author": {
+    "name": "fmh66"
+  },
+  "repository": "https://github.com/fmh66/kernel-opt-agent",
+  "homepage": "https://github.com/fmh66/kernel-opt-agent#readme",
+  "license": "MIT",
+  "keywords": [
+    "cuda",
+    "triton",
+    "cutlass",
+    "gpu",
+    "kernel",
+    "profiling"
+  ]
+}

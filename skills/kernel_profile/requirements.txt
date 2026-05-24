@@ -1,0 +1,6 @@
+numpy
+torch
+triton
+nsight-python
+cutlass
+nvidia-cutlass-dsl

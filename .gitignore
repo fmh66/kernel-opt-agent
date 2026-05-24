@@ -8,3 +8,7 @@ __pycache__
 kernelbench
 .humanize
 setup_kernels.py
+demo
+skills/kernel-opt-skill
+README-zh.md
+README.md

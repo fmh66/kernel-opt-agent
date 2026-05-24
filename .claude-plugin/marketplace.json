@@ -1,0 +1,14 @@
+{
+  "name": "fmh66",
+  "owner": {
+    "name": "fmh66"
+  },
+  "plugins": [
+    {
+      "name": "kernel-opt-agent",
+      "source": "./",
+      "description": "GPU kernel knowledge-base and profiling skills for CUDA, Triton, CuTe DSL, CUTLASS, and Nsight Compute workflows.",
+      "version": "0.1.0"
+    }
+  ]
+}
