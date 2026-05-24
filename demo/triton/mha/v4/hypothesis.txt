@@ -1,3 +1,0 @@
-Hypothesis: Reduce BLOCK_I from 64 to 32, keep BLOCK_N=128 with num_stages=1
-Rationale : v3 (BLOCK_I=64, BLOCK_N=128) hit 255 registers (spilling). Reducing BLOCK_I to 32 halves the per-program Q tile from [64,64] to [32,64], reducing register pressure. The smaller Q tile offsets the register pressure from the larger K/V tiles. More grid parallelism (512 programs vs 256).
-Expected  : Register pressure should drop below 255 (no spill). Latency may be similar or slightly better than v3. L2 hit rate may drop slightly due to more programs competing for cache.

@@ -1,6 +1,0 @@
-Hypothesis: Use __ldg() for input reads to route through read-only cache and reduce memory latency
-Rationale : v0 NCU shows L1 Hit Rate=0%, Stall Long Scoreboard=20.8%.
-            __ldg() loads through the read-only data cache (separate from L1), which can cache
-            read-only data more efficiently and reduce DRAM pressure. No impact on grid size
-            or occupancy — preserves v0's parallelism while improving memory access.
-Expected  : Long Scoreboard stall ↓, L2 Hit Rate ↑, latency ↓ 10-20%.

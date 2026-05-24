@@ -1,4 +1,0 @@
-Hypothesis: Increase num_warps to 8 keeping single row per block (unlike v1's 2 rows).
-Rationale : v1 failed due to combined effects of 2 rows + 8 warps. Isolating just num_warps=8 should show whether more warps help memory latency hiding without the row-loop overhead. More warps = better Long Scoreboard latency hiding.
-Expected  : Long Scoreboard ↓, latency improvement from better memory latency hiding.
-Outcome   : FAILURE — latency 0.0406→0.0646ms (-62%!). Despite occupancy ↑93% and Long Scoreboard ↓30%, L1 bank conflicts ↑57% (2981→4452), shared memory BW doubled. More warps dramatically increased cross-warp reduction overhead.

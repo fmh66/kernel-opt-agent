@@ -1,4 +1,0 @@
-Hypothesis: Process 2 rows per block to amortize gamma loads and barrier overhead
-Rationale : v1 memory-bound at 78.4% with 4.07% Barrier. 2 rows/block halves barrier cost per row and gamma reads.
-Expected  : Barrier stall ↓, Long Scoreboard ↓, latency ↓ 10-15%.
-Result    : Neutral (3.6%, within noise). Regs ↑ 30→40, Occupancy ↓ 101.7%→96.0%, Waves/SM ↓ 2.03→1.02. Benefit canceled by occupancy loss.

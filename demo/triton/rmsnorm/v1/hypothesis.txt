@@ -1,6 +1,0 @@
-Hypothesis: Process 4 rows per block (ROWS_PER_BLOCK=4) to reduce redundant gamma loads from global memory
-Rationale : v0 NCU shows Memory SOL=86.0%, Long Scoreboard stall=92.05% indicating memory-bound.
-            Gamma (D=1024, 4KB) is loaded from global memory once per row (N=1024 times).
-            Processing 4 rows per block loads gamma once and reuses it across 4 rows,
-            reducing gamma memory traffic by ~75%. Grid reduces from 1024 to 256 blocks.
-Expected  : Memory SOL ↓ to 60-70%, DRAM Total Bandwidth ↓, latency ↓ 10-20%.

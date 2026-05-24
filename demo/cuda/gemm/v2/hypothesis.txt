@@ -1,8 +1,0 @@
-Hypothesis: Fuse 2 K-tile loads per barrier cycle to reduce __syncthreads() overhead
-Rationale : v1 NCU shows Barrier stall=5.96 is the dominant bottleneck from 128 total
-            __syncthreads() calls (2 per K-tile iteration × 64 tiles).
-            Loading and computing 2 tiles per barrier reduces sync calls from 128→64.
-            Experience log confirms this gave 1.02x speedup with Long Scoreboard
-            dropping 44% (more compute per barrier hides load latency).
-Expected  : Barrier stall ↓ moderately, Long Scoreboard ↓ significantly (more ILP
-            between barriers), latency ↓ 2-5%. Shared memory usage doubles (2KB→4KB).

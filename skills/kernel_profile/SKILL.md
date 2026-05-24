@@ -22,6 +22,7 @@ Use this skill to check environment readiness, validate kernel correctness, and 
    - `cute-dsl` and `triton` modules must define `setup(**kwargs)` and `run_kernel(**kwargs)`.
    - See `scripts/scripts.md` for full usage and options.
 6. Collect NCU metrics with `scripts/ncu_profile.py`.
+   - Execution time is measured before profiling with CUDA event timing.
    - See `scripts/scripts.md` for full usage and options.
 7. Read `ncu_summary.md` first, then consult `reference/NCU.md` for metric interpretation.
 8. Classify the bottleneck from measured evidence.

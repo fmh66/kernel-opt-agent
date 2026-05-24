@@ -10,7 +10,9 @@ Usage:
 
 import argparse
 import os
+import statistics
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +27,16 @@ from correctness_check import (
 )
 
 import nsight
+
+
+@dataclass
+class TimingConfig:
+    num_warmup: int
+    num_trials: int
+    discard_first: int
+    cache_mode: str
+    prewarm_calls: int
+    device: int
 
 # NCU metrics (replace --section / --set flags)
 CORE_METRICS = []
@@ -184,28 +196,132 @@ def _get_kernel_state(solution_file, backend, dim_values, ptr_size, arch, seed):
     return _kernel_state
 
 
+def _summarize_times(times):
+    if not times:
+        return {
+            "mean": 0.0,
+            "std": 0.0,
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "p20": 0.0,
+            "p80": 0.0,
+            "num_trials": 0,
+        }
+    vals = sorted(float(v) for v in times)
 
-def time_kernel(solution_file, backend, dim_values, ptr_size, arch, seed, warmup, iters=100):
-    """Measure kernel latency with CUDA Events. Returns (mean_ms, std_ms)."""
-    import statistics
+    def pct(p):
+        if len(vals) == 1:
+            return vals[0]
+        idx = (len(vals) - 1) * p
+        lo = int(idx)
+        hi = min(lo + 1, len(vals) - 1)
+        frac = idx - lo
+        return vals[lo] * (1.0 - frac) + vals[hi] * frac
+
+    return {
+        "mean": statistics.mean(vals),
+        "std": statistics.stdev(vals) if len(vals) > 1 else 0.0,
+        "median": statistics.median(vals),
+        "min": vals[0],
+        "max": vals[-1],
+        "p20": pct(0.20),
+        "p80": pct(0.80),
+        "num_trials": len(vals),
+    }
+
+
+def _clear_l2_cache_torch(device):
+    dummy = torch.empty((32, 1024, 1024), dtype=torch.int64, device=device)
+    dummy.fill_(42)
+    del dummy
+
+
+def _get_triton_cache():
+    from triton import runtime as triton_runtime
+    return triton_runtime.driver.active.get_empty_cache_for_benchmark()
+
+
+def _clear_l2_cache_triton(cache):
+    from triton import runtime as triton_runtime
+    triton_runtime.driver.active.clear_cache(cache)
+
+
+def _clear_cache(cache_mode, device, triton_cache=None):
+    if cache_mode == "hot":
+        return
+    if cache_mode == "torch":
+        _clear_l2_cache_torch(device)
+        return
+    if cache_mode == "triton":
+        if triton_cache is None:
+            triton_cache = _get_triton_cache()
+        _clear_l2_cache_triton(triton_cache)
+        return
+    raise ValueError(f"Unsupported cache mode: {cache_mode}")
+
+
+def _prewarm(fn, calls, device):
+    if calls <= 0:
+        return
+    print(f"[prewarm] running {calls} untimed call(s) to trigger lazy init/JIT...")
+    with torch.cuda.device(device):
+        for _ in range(calls):
+            fn()
+        torch.cuda.synchronize(device=device)
+
+
+def _time_cuda_event(fn, cfg):
+    device = torch.device(f"cuda:{cfg.device}")
+    times = []
+    with torch.cuda.device(device):
+        for _ in range(cfg.num_warmup):
+            fn()
+            torch.cuda.synchronize(device=device)
+        torch.cuda.empty_cache()
+
+        triton_cache = _get_triton_cache() if cfg.cache_mode == "triton" else None
+        for trial in range(cfg.num_trials + cfg.discard_first):
+            torch.cuda.synchronize(device=device)
+            _clear_cache(cfg.cache_mode, device, triton_cache)
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            fn()
+            end.record()
+            torch.cuda.synchronize(device=device)
+            if trial >= cfg.discard_first:
+                times.append(float(start.elapsed_time(end)))
+    return times
+
+
+def time_kernel(solution_file, backend, dim_values, ptr_size, arch, seed, timing_config):
+    """Measure kernel latency with CUDA events. Returns timing stats dict."""
     state = _get_kernel_state(solution_file, backend, dim_values, ptr_size, arch, seed)
     fn = state.callable
 
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
+    _prewarm(fn, timing_config.prewarm_calls, timing_config.device)
+    detail = (
+        f"method=cuda_event, warmup_calls={timing_config.num_warmup}, "
+        f"trials={timing_config.num_trials}, discard_first={timing_config.discard_first}, "
+        f"cache={timing_config.cache_mode}"
+    )
+    print(f"[timing] measuring kernel ({detail})...")
 
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    times = []
-    for _ in range(iters):
-        start.record()
-        fn()
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-
-    return statistics.mean(times), (statistics.stdev(times) if len(times) > 1 else 0.0)
+    times = _time_cuda_event(fn, timing_config)
+    stats = _summarize_times(times)
+    print(
+        f"[timing] {stats['mean']:.4f} ms ± {stats['std']:.4f} ms, "
+        f"median {stats['median']:.4f} ms, min {stats['min']:.4f} ms, "
+        f"max {stats['max']:.4f} ms, n={stats['num_trials']}"
+    )
+    if stats["num_trials"] < 3:
+        print(
+            f"[warn] timing produced only {stats['num_trials']} sample(s); "
+            "increase --timing-trials for more stable statistics.",
+            file=sys.stderr,
+        )
+    return stats
 
 
 def run_profile(solution_file, backend, dim_values, ptr_size, arch,
@@ -235,9 +351,10 @@ def run_profile(solution_file, backend, dim_values, ptr_size, arch,
     return df
 
 
-def format_summary(df, solution_file, dim_values, arch, mean_ms, std_ms):
+def format_summary(df, solution_file, dim_values, arch, timing_stats, timing_config):
     gpu_name = torch.cuda.get_device_name(torch.cuda.current_device())
     active_metrics = set(FULL_METRICS)
+    timing_stats = timing_stats or _summarize_times([])
 
     lines = [
         "# NCU Profile Summary",
@@ -248,7 +365,7 @@ def format_summary(df, solution_file, dim_values, arch, mean_ms, std_ms):
         f"| **GPU** | {gpu_name} |",
         f"| **Arch** | {arch} |",
         f"| **Dims** | {dim_values} |",
-        f"| **Execution Time** | {mean_ms:.4f} ms ± {std_ms:.4f} ms |",
+        f"| **Execution Time** | {timing_stats['mean']:.4f} ms ± {timing_stats['std']:.4f} ms |",
         "",
     ]
 
@@ -352,6 +469,17 @@ def main():
                         help="Directory for output files")
     parser.add_argument("--warmup", type=int, default=20,
                         help="Warmup iterations before profiling (default: 20)")
+    parser.add_argument("--timing-warmup", type=int, default=5,
+                        help="Warmup calls for CUDA event timing (default: 5)")
+    parser.add_argument("--timing-trials", type=int, default=100,
+                        help="Measured trials for CUDA event timing (default: 100)")
+    parser.add_argument("--timing-discard-first", type=int, default=1,
+                        help="Discard this many first measured timing trials (default: 1)")
+    parser.add_argument("--timing-cache-mode", type=str, default="hot",
+                        choices=["triton", "torch", "hot"],
+                        help="Cache behavior during execution-time measurement: triton clear_cache, torch L2 thrash, or hot")
+    parser.add_argument("--prewarm-calls", type=int, default=1,
+                        help="Untimed calls before execution-time measurement to trigger lazy init/JIT (default: 1)")
     parser.add_argument("--ptr-size", type=int, default=0,
                         help="Override element count for pointer buffers")
     parser.add_argument("--arch", type=str, default="",
@@ -369,6 +497,14 @@ def main():
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    timing_config = TimingConfig(
+        num_warmup=args.timing_warmup,
+        num_trials=args.timing_trials,
+        discard_first=args.timing_discard_first,
+        cache_mode=args.timing_cache_mode,
+        prewarm_calls=args.prewarm_calls,
+        device=args.gpu,
+    )
 
     under_nsight = (
         "CUDA_INJECTION64_PATH" in os.environ
@@ -376,18 +512,17 @@ def main():
         or any(k.startswith("NV_NSIGHT_") for k in os.environ)
     )
 
-    mean_ms = std_ms = 0.0
+    timing_stats = _summarize_times([])
     if not under_nsight:
-        mean_ms, std_ms = time_kernel(
+        timing_stats = time_kernel(
             solution_file=solution_file,
             backend=args.backend,
             dim_values=dim_values,
             ptr_size=args.ptr_size,
             arch=arch,
             seed=args.seed,
-            warmup=args.warmup,
+            timing_config=timing_config,
         )
-        print(f"[timing] {mean_ms:.4f} ms ± {std_ms:.4f} ms")
 
     try:
         df = run_profile(
@@ -407,7 +542,7 @@ def main():
     if under_nsight:
         return 0
 
-    summary_txt = format_summary(df, solution_file, dim_values, arch, mean_ms, std_ms)
+    summary_txt = format_summary(df, solution_file, dim_values, arch, timing_stats, timing_config)
     details_txt = format_details(df)
 
     summary_path = output_dir / "ncu_summary.md"

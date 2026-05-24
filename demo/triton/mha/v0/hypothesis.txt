@@ -1,3 +1,0 @@
-Hypothesis: Fuse d dimension — grid from (H,N,d_k) to (H,N), each program computes full BLOCK_D output vector
-Rationale : v0 Memory SOL=77.66% >> SM SOL=37.80% → memory-bound. Each Q[h,i,:] is loaded 64x (once per d), K/V tiles similarly duplicated 64x per (h,i). Grid=1M blocks all doing redundant loads. Long Scoreboard=30.18%.
-Expected  : Memory traffic ↓ ~64× by eliminating redundant Q/K loads. Latency ↓ >90%. Memory SOL may shift but primary gain is from reduced transfer volume.

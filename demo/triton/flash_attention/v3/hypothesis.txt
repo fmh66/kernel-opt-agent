@@ -1,8 +1,0 @@
-Hypothesis: Enable num_stages=2 pipelining + num_warps=8 to hide global memory latency and improve occupancy
-Rationale : v0 NCU shows Long Scoreboard stall=1.406 (global memory latency is the dominant stall).
-            num_stages=2 enables Triton's software pipelining to overlap global loads with compute.
-            num_warps=8 (256 threads vs 128) increases warps per block, better hides latency.
-            Triton docs: "When the kernel has clear Long Scoreboard stalls, num_stages≥2 helps."
-            Past experience warns num_stages≥3 adds overhead without benefit.
-Expected  : Long Scoreboard stall ↓ significantly, Memory SOL ↓ to 70-80%, latency ↓ 15-25%.
-            Register pressure may change with different num_warps, affecting occupancy.

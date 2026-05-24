@@ -1,6 +1,0 @@
-Hypothesis: Use float4 vectorized loads and stores to reduce memory instruction count by 4x
-Rationale : v0/v1 NCU show Stall Long Scoreboard=21%, L1 Hit Rate=0%.
-            The kernel issues 1 load + 1 store per element, totaling 204800 load/store instructions.
-            float4 coalesces 4 elements into 1 vector instruction, reducing load/store count 4x.
-            Fewer memory instructions → less pressure on LSU → better latency hiding.
-Expected  : Long Scoreboard stall ↓ below 15%, LSU Pipe Utilization ↑, latency ↓ 15-30%.

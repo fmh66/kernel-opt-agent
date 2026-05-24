@@ -1,3 +1,0 @@
-Hypothesis: Replace manual shuffle reduction loops with __reduce_add_sync intrinsic (Ampere+)
-Rationale : v2 is the best version so far (1.8653ms, Memory SOL=93.93%). The warp-level reduction currently uses a 5-iteration __shfl_down_sync loop. __reduce_add_sync (sm_80+) replaces this with a single hardware instruction, reducing shuffle instruction count from 20 to 4 per block. This may reduce warp stall cycles and slightly improve throughput even in a memory-bound regime.
-Expected  : IPC modest ↑, warp-level stall ↓, latency ↓ 2-5%.

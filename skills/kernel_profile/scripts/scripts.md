@@ -95,6 +95,11 @@ python scripts/ncu_profile.py kernel.py \
 |---|---:|---|
 | `--implementation=<auto/cuda-cpp/cute-dsl/cutlass/triton>` | `auto` | Implementation selection |
 | `--warmup=<n>` | `20` | Warmup iterations before profiling |
+| `--timing-warmup=<n>` | `5` | Warmup calls for CUDA event timing |
+| `--timing-trials=<n>` | `100` | Measured trials for CUDA event timing |
+| `--timing-discard-first=<n>` | `1` | First measured timing trials to discard |
+| `--timing-cache-mode=<triton/torch/hot>` | `hot` | Cache behavior during execution-time measurement |
+| `--prewarm-calls=<n>` | `1` | Untimed calls before timing to trigger lazy init/JIT |
 | `--gpu=<id>` | `0` | CUDA device index |
 | `--arch=<sm_XX>` | auto | GPU architecture |
 | `--ptr-size=<n>` | auto | Override CUDA pointer buffer element count |
@@ -109,3 +114,5 @@ python scripts/ncu_profile.py kernel.py \
 | `ncu_details.md` | Full metric table with averages, min/max, standard deviation, and stability flags |
 
 The profiler uses `nsight-python` and manages the NCU subprocess internally. Do not wrap it in a manual `ncu` command unless debugging the profiler itself.
+
+The execution time shown in `ncu_summary.md` is measured with CUDA events before NCU collection, outside the profiler injection process. NCU metrics are still collected from a separate annotated solve call after the timing pass.

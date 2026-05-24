@@ -1,3 +1,0 @@
-Hypothesis: Parallelize across the D dimension (one block per row) with warp-level reductions, to fix both coalescing and low parallelism
-Rationale : v0 NCU shows Global Load/Store Efficiency=12.5% (threads access at stride-D=4096 → 16KB strides between warp neighbors), Achieved Occupancy=16.67% (only 16 blocks across 84 SMs), Long Scoreboard=46.33%. By making threads within a warp access consecutive elements of the same row, memory coalescing should approach 100%. By launching one block per row (N=4096 blocks), parallelism increases dramatically.
-Expected  : Global Load Efficiency ↑ above 80%, Global Store Efficiency ↑ above 80%, Long Scoreboard stall ↓ below 20%, Achieved Occupancy ↑, latency ↓ 50-70%.

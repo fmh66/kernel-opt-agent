@@ -1,4 +1,0 @@
-Hypothesis: Replace manual softmax (max→exp→sum→div) with tl.softmax builtin for better compiler optimization.
-Rationale : Triton 3.6.0 provides tl.softmax which implements this common pattern. Triton's builtin may have better reduction handling and compiler hints than manual implementation.
-Expected  : Slight improvement from better reduction code generation.
-Outcome   : NEUTRAL — latency 0.0399→0.0406ms (~same, within noise). tl.softmax produces essentially identical PTX as manual implementation. All metrics unchanged.

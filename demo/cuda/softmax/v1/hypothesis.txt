@@ -1,3 +1,0 @@
-Hypothesis: Use shared memory to cache exp values, fusing the exp+sum and normalize passes into a single global memory pass
-Rationale : v1 NCU shows Memory SOL=92.38% (bandwidth-saturated). Current kernel makes 3 reads + 2 writes through global memory per row. By storing intermediate exp values in shared memory after computing them, the normalize step reads from shared memory instead of global memory, reducing traffic to 2 reads + 1 write per row (~40% less memory traffic).
-Expected  : Memory SOL ↓ below 65%, DRAM bandwidth ↓ 30-40%, latency ↓ 25-35%.
