@@ -1,0 +1,40 @@
+{
+  "name": "kernel-opt-agent",
+  "version": "0.1.0",
+  "description": "GPU kernel knowledge-base and profiling skills for Codex.",
+  "author": {
+    "name": "fmh66",
+    "url": "https://github.com/fmh66"
+  },
+  "homepage": "https://github.com/fmh66/kernel-opt-agent",
+  "repository": "https://github.com/fmh66/kernel-opt-agent",
+  "license": "MIT",
+  "keywords": [
+    "cuda",
+    "triton",
+    "cutlass",
+    "gpu",
+    "kernel",
+    "profiling"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Kernel Opt Agent",
+    "shortDescription": "GPU kernel KBS retrieval and NCU profiling workflows.",
+    "longDescription": "Installs kernel_KBS and kernel_profile: a corpus-backed GPU kernel knowledge base plus local correctness, Nsight Compute profiling, and bottleneck diagnosis workflows.",
+    "developerName": "fmh66",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/fmh66/kernel-opt-agent",
+    "defaultPrompt": [
+      "Search kernel_KBS for Blackwell NVFP4 GEMM patterns.",
+      "Profile this Triton kernel and classify its bottleneck.",
+      "Find source-backed CUDA optimization ideas for this kernel."
+    ],
+    "brandColor": "#2563EB"
+  }
+}
