@@ -1,3 +1,0 @@
-Hypothesis: Use float4 vectorized loads/stores to reduce global memory instruction count by 4x and improve effective bandwidth
-Rationale : v2 NCU shows Memory SOL=93.72% (still bandwidth-saturated). Global coalescing is already 100%, but each load/store instruction only moves 4 bytes. Switching to float4 (128-bit) loads/stores reduces instruction count for memory ops by 4x, allowing the memory pipeline to operate more efficiently with fewer instructions per byte moved.
-Expected  : DRAM bandwidth slightly improved (or maintained with lower instruction count), IPC ↑, latency ↓ 5-15%.

@@ -1,5 +1,0 @@
-Hypothesis: Change thread-to-key mapping from strided (j = tid, tid+blockDim, ...) to contiguous chunks (j = tid*chunk, tid*chunk+1, ...) to eliminate shared memory bank conflicts and improve K access locality
-Rationale : v1 NCU shows L1 Bank Conflicts=227M from strided scores[] access (all threads hitting same bank, 64*4=256 byte stride modulo 128-byte bank width = 0).
-            Contiguous mapping means consecutive threads access consecutive shared memory addresses, eliminating bank conflicts.
-            Also improves K global load coalescing since consecutive threads read consecutive K rows.
-Expected  : L1 Bank Conflicts ↓ by >90%, Global Load Efficiency ↑ above 50%, Long Scoreboard stall ↓, latency ↓ 20-40%.

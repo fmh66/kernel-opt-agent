@@ -1,3 +1,0 @@
-Hypothesis: Pre-scale Q by inv_sqrt_dk to remove one multiply from the inner K/V loop
-Rationale : v3 is the fastest config (0.264ms, BLOCK_I=64, BLOCK_N=128, num_stages=1). The inner loop computes `scores = tl.dot(q, k) * inv_sqrt_dk` on every iteration. Since inv_sqrt_dk is constant and q is loaded once, we can pre-scale Q: `q = q * inv_sqrt_dk` → `scores = tl.dot(q, k)`. Saves one multiply per score element per iteration.
-Expected  : Small latency improvement (~2-5%). Memory metrics unchanged. Compute metrics may improve slightly due to reduced instruction count.

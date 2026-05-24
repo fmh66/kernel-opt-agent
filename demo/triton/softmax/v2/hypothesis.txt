@@ -1,4 +1,0 @@
-Hypothesis: Process 2 rows per block with default num_warps=4 (revert warps from v1's 8).
-Rationale : v1 regression was caused by increased L1 bank conflicts (2839→4192) and register pressure (23→28/thread) with num_warps=8. Reverting to default num_warps should reduce contention while keeping the 2-rows-per-block batching benefit.
-Expected  : L1 bank conflicts ↓, reg pressure ↓, latency should improve vs v1.
-Outcome   : FAILURE — latency 0.0415→0.0438ms (-5.5% from v1). Occupancy collapsed 98%→53% (Waves/SM 1.02→0.51). Halving grid (1024→512 blocks) reduced parallelism. Multi-row approach fundamentally reduces blocks, hurting occupancy.

@@ -1,7 +1,0 @@
-Hypothesis: Increase BLOCK_M from 64 to 128 to improve warp execution efficiency and halve total K/V traffic
-Rationale : v0 NCU shows Warp Execution Efficiency=32% — only 32% of threads do useful work per instruction.
-            With BLOCK_M=128 and block_size=128, each thread handles 64 elements along d (BLOCK_D/d),
-            better load balancing across threads. Grid shrinks 3072→1536 programs, halving total K/V loads.
-            Past experience warns larger tiles increase register pressure, but BLOCK_M=128 is within typical range.
-Expected  : Warp Execution Efficiency ↑, Memory SOL ↓ proportionally to reduced grid size, latency ↓ 20-40%.
-            Register pressure may increase moderately.

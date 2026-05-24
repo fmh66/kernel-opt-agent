@@ -1,6 +1,6 @@
 {
   "name": "kernel-opt-agent",
-  "description": "GPU kernel knowledge-base and profiling skills for CUDA, Triton, CuTe DSL, CUTLASS, and Nsight Compute workflows.",
+  "description": "GPU kernel knowledge-base, benchmarking, and profiling skills for CUDA, Triton, CuTe DSL, CUTLASS, PyTorch, and Nsight Compute workflows.",
   "version": "0.1.0",
   "author": {
     "name": "fmh66"
@@ -14,6 +14,7 @@
     "cutlass",
     "gpu",
     "kernel",
+    "benchmark",
     "profiling"
   ]
 }

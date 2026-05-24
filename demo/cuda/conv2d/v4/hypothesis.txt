@@ -1,3 +1,0 @@
-Hypothesis: Thread coarsening — each thread computes 2 adjacent output pixels (ow and ow+blockDim.x) doubling the per-thread FMA count from 576 to 1152, improving ILP and reducing total blocks by 2x.
-Rationale : v3 NCU shows SM at 98% (near peak), Math Pipe Throttle 2.38%, Not Selected 3.55%. Increasing per-thread work provides more independent operations to hide memory latency and keep the FMA pipe fed, while fewer blocks reduce scheduling overhead.
-Expected  : FFMA throughput ↑, Math Pipe Throttle ↓, improved IPC, latency ↓ 10-15%.

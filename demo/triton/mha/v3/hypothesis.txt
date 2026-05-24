@@ -1,3 +1,0 @@
-Hypothesis: Increase BLOCK_N from 64 to 128, reducing K/V loop iterations from 16 to 8
-Rationale : v2 Memory SOL=78.08% still memory-bound. Past experience (id=28) shows num_stages≥2 doesn't help for online-softmax MHA — sequential dependency prevents cross-iteration pipelining. So losing num_stages=2→1 from the larger BLOCK_N shouldn't hurt. Fewer iterations = less loop overhead, less address computation.
-Expected  : Similar or slightly better latency. Less loop overhead, L2 hit rate may change. If regressions observed, online softmax pipelining is actually helping.

@@ -1,4 +1,0 @@
-Hypothesis: __ldg() read-only cache + 2-way ILP to reduce cache contention and improve scheduling
-Rationale : v1 L1=47%, L2=54%. __ldg() uses separate texture cache; 2-way ILP gives compiler more scheduling latitude.
-Expected  : Better cache utilization, Long Scoreboard ↓, latency ↓ 5-15%.
-Result    : Neutral (0.0309ms, same as v1). Regs 30→26 but Long Scoreboard ↑ 31.2%. __ldg() didn't help memory-bound kernel.

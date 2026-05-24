@@ -1,8 +1,0 @@
-Hypothesis: Double num_warps from default 4 to 8 to increase occupancy from 23% to ~50%
-Rationale : v0/v1 NCU shows Achieved Occupancy=23% (Theoretical=25%), limited by shared memory
-            per block (32KB) restricting to 4 blocks/SM. With 4 warps/block, only 16 warps/SM
-            are active — not enough to hide Short Scoreboard stall (0.70).
-            Increasing to 8 warps/block (256 threads) gives 32 warps/SM at same block count,
-            doubling the pool of warps available to hide shared memory latency.
-Expected  : Achieved Occupancy ↑ toward 50%, Short Scoreboard stall ↓, latency ↓ 10-20%.
-            Registers/thread should drop as work per thread halves.

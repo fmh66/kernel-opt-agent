@@ -1,8 +1,0 @@
-Hypothesis: Each program processes 4 rows instead of 1, loading gamma and beta once and reusing across rows
-Rationale : v0 NCU shows Memory-Bound (Memory SOL=84.72%, SM SOL=14.53%), Long Scoreboard stall=63.88%.
-            gamma and beta (D=1024 elements each) are loaded independently by all 1024 programs from global memory,
-            creating massive redundant DRAM traffic. By having each program process 4 rows, gamma/beta loads
-            are reduced 4x (1024 → 256 loads), and compute per memory access increases.
-            Waves/SM=1.02 means almost no latency hiding — this is acceptable since we're trading memory traffic
-            for more compute per block.
-Expected  : Memory SOL ↓ below 70%, Long Scoreboard stall ↓ below 50%, DRAM bandwidth ↓ ~20%, latency ↓ 15-25%.

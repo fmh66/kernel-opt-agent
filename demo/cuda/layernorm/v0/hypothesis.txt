@@ -1,3 +1,0 @@
-Hypothesis: Change from one-thread-per-row to one-block-per-row with warp-level reductions
-Rationale : v0 NCU shows Stall Long Scoreboard=47.11%, Global Load Efficiency=12.5%, Achieved Occupancy=16.62% (40 blocks for 84 SMs). Each thread serially processes D=10240 elements with stride-D global memory access (non-coalesced). Changing to one-block-per-row (grid=N=10240) distributes D across 256 threads per block (~40 elements each), uses warp shuffle for mean/var reduction, and enables coalesced access.
-Expected  : Global Load Efficiency ↑ 12.5%→100%, Achieved Occupancy ↑ 16.6%→>90%, Stall Long Scoreboard ↓ 47%→<10%, latency ↓ 70-85%.

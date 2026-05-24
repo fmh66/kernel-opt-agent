@@ -1,4 +1,0 @@
-Hypothesis: Use float4 vectorized loads in the QK dot-product loop to improve global load efficiency and reduce Load instructions
-Rationale : v1 NCU shows Long Scoreboard=30.37% (global memory latency), Global Load Efficiency=21.96%.
-            float4 loads issue a single 16-byte load instruction instead of 4 separate 4-byte loads, reducing instruction count by ~4x in the dot product inner loop and improving bytes-per-transaction efficiency.
-Expected  : Global Load Efficiency ↑ above 40%, Long Scoreboard stall ↓ below 25%, IPC ↑, latency ↓ 15-25%.

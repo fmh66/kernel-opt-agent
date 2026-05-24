@@ -1,3 +1,0 @@
-Hypothesis: Use __ldg() for gamma and beta reads to route through read-only texture cache
-Rationale : v2 NCU shows Memory SOL=93.93%, L2 Hit Rate=40.84%. Gamma and beta (D=10240 elements each) are read identically by all N=10240 blocks — that's redundant DRAM traffic. __ldg() bypasses the regular L1/L2 path and uses the dedicated read-only cache, preventing gamma/beta from polluting L1 and potentially improving effective throughput.
-Expected  : DRAM Read Bandwidth ↓ 5-10%, L2 Hit Rate ↑ (or read-only cache absorbs gamma/beta traffic), latency ↓ 5-15%.

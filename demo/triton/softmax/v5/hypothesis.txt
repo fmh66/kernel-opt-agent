@@ -1,4 +1,0 @@
-Hypothesis: Reduce num_warps to 2 (64 threads per block) to reduce shared memory bank conflicts in reductions.
-Rationale : All num_warps=8 attempts increased bank conflicts. With 2 warps, each thread handles 16 elements instead of 8. Fewer threads → fewer cross-warp reduction participants → less shared memory contention. Trade-off: lower occupancy but memory-bound kernels may be insensitive to occupancy.
-Expected  : L1 bank conflicts ↓ significantly, latency improvement from reduced reduction overhead.
-Outcome   : FAILURE — latency 0.0399→0.0437ms (-9.5%). Bank conflicts only marginally ↓ (2839→2753, -3%). Register pressure ↑43% (23→33/thread) because 16 elements/thread requires more registers. IPC ↓20% due to register pressure stalls.

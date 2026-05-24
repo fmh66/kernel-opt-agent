@@ -1,5 +1,0 @@
-Hypothesis: Distribute QK score computation and softmax across all threads using strided assignment and warp/block reductions, instead of serializing on thread 0
-Rationale : v0 NCU shows Warp Execution Efficiency=1.73% (only thread 0 works), Stall Barrier=14.41% (63 threads idle at __syncthreads()), IPC=0.26.
-            Past softmax optimization achieved 7.7x speedup by converting one-thread-per-row to one-block-per-row with warp reductions.
-            Each thread handles scores[j] for j = tid, tid+blockDim, tid+2*blockDim, ..., then warp-shuffle max/sum reductions + cross-warp SMEM reduction.
-Expected  : Warp Execution Efficiency ↑ above 50%, Stall Barrier ↓ below 5%, IPC ↑ above 1.0, latency ↓ 60-80%.

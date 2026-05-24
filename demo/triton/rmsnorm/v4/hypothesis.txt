@@ -1,7 +1,0 @@
-Hypothesis: Persistent kernel with atomic row fetching to load gamma once per block while maintaining parallelism
-Rationale : v0 is memory-bound (86% SOL) with gamma loaded N=1024 times (4MB redundant).
-            Multi-row processing failed because it reduced grid parallelism.
-            Persistent kernel launches fixed grid (e.g., 168 blocks) that each load gamma once,
-            then atomically fetch and process rows in a loop.
-            This reduces gamma traffic (loaded once per block, not per row) without reducing parallelism.
-Expected  : Memory SOL ↓ to 65-75%, DRAM Total BW ↓, latency ↓ 10-20%.

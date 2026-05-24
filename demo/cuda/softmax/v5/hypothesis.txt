@@ -1,4 +1,0 @@
-Hypothesis: Add __launch_bounds__(256, 6) to optimize register allocation and reduce register pressure
-Rationale : v2 NCU shows 40 registers/thread, Achieved Occupancy=81.6%, Theoretical=83.3%. __launch_bounds__ hints the compiler about threads-per-block and min-blocks-per-SM, potentially reducing register usage and improving scheduling.
-Expected  : Registers ↓ from 40, Occupancy ↑ slightly, latency ↓ 3-5%.
-Outcome   : Neutral — 0.03% change within noise. Kernel is at DRAM bandwidth roofline (93.9%).

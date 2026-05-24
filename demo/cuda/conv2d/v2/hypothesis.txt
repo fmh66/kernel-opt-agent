@@ -1,3 +1,0 @@
-Hypothesis: Fix shared memory tile loading to use coalesced 2D thread-to-input mapping — each thread (tx,ty) loads its corresponding input element, with consecutive tx threads accessing consecutive memory addresses, restoring Global Load Efficiency from 31.52% back to near 100%.
-Rationale : v1 NCU shows Global Load Efficiency dropped from 69.56% to 31.52% because the flat 1D thread mapping produced strided global memory accesses across input rows. The 2D mapping aligns threadIdx.x with the W dimension, giving natural coalescing on Ampere's 128-byte cache lines.
-Expected  : Global Load Efficiency ↑ to >85%, L1 Load Bandwidth ↓, L1 Bank Conflicts ↓, latency improve over v1 (though barrier overhead remains from per-channel syncing).

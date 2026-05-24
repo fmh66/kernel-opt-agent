@@ -1,6 +1,0 @@
-Hypothesis: Process 2 rows per block (ROWS_PER_BLOCK=2) instead of 4, to halve gamma loads while retaining enough grid parallelism
-Rationale : v1 failed because 4x grid reduction collapsed occupancy. v0 has 12.2 waves/SM.
-            With ROWS_PER_BLOCK=2, grid=512 blocks (~6 waves/SM on 84 SMs).
-            This halves gamma memory traffic while retaining enough parallelism to hide latency.
-            v0 Memory SOL=86%, Long Scoreboard=92% — halving gamma reads should reduce memory pressure.
-Expected  : Memory SOL ↓ to 65-75%, latency ↓ 5-15%, occupancy remains >60%.

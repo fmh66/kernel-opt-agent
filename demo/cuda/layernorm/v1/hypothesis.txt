@@ -1,3 +1,0 @@
-Hypothesis: Fuse mean and variance computation into a single pass using sum-of-x and sum-of-x² accumulation, then derive var = sum_x²/D - mean²
-Rationale : v1 NCU shows Memory SOL=94.76%, Long Scoreboard=126.33%. Input is read 3× per row (mean pass, var pass, normalize pass). By computing sum_x and sum_x2 simultaneously in one pass, input reads drop from 3× to 2×, reducing DRAM traffic by ~33%. Since the kernel is memory-bound, this should improve latency proportionally.
-Expected  : Memory SOL ↓ below 70%, DRAM Read Bandwidth ↓ ~30%, latency ↓ 20-30%.

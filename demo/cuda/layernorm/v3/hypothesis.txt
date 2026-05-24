@@ -1,3 +1,0 @@
-Hypothesis: Thread coarsening — each thread processes 4 elements per loop iteration instead of 1 in all loops
-Rationale : v2/v3 NCU shows Memory SOL=94% (bandwidth-saturated). While compute optimizations won't reduce DRAM traffic, thread coarsening reduces loop control overhead (fewer branch instructions, fewer loop iterations). The normalize loop with 4 elements per iteration exposes more ILP (4 independent FMAs) which can better overlap with memory latency. Experience #33 showed thread-coarsening{coarse=2} gave 1.31x on gemm.
-Expected  : Branch Targets ↓ ~75%, IPC modest ↑, latency ↓ 5-15%.
