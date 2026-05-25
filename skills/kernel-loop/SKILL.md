@@ -1,6 +1,6 @@
 ---
 name: kernel-loop
-description: Iterative GPU kernel optimization orchestrator for the local kernel-loop skill that chains kernel_profile, kernel_KBS, and kernel_benchmark. Use when the user wants an end-to-end CUDA/CUTLASS/CuTe DSL/Triton optimization loop with environment checks, correctness validation, Nsight Compute profiling, KBS-guided hypotheses, one-change kernel iterations, final benchmarking, and optimization reports.
+description: Iterative GPU kernel optimization orchestrator for the local kernel-loop skill that chains kernel-profile, kernel-KBS, and kernel-benchmark. Use when the user wants an end-to-end CUDA/CUTLASS/CuTe DSL/Triton optimization loop with environment checks, correctness validation, Nsight Compute profiling, KBS-guided hypotheses, one-change kernel iterations, final benchmarking, and optimization reports.
 ---
 
 # kernel-loop
@@ -57,15 +57,15 @@ Create `N+1` version directories:
 3. Run correctness for the current version.
 4. If correctness fails, fix that version until correctness passes before profiling.
 5. Run NCU profiling for the current version.
-6. Read `ncu_summary.md` first, then `ncu_details.md` and `kernel_profile/reference/NCU.md` only as needed.
+6. Read `ncu_summary.md` first, then `ncu_details.md` and `kernel-profile/reference/NCU.md` only as needed.
 7. Classify bottleneck: `Memory-Bound`, `Compute-Bound`, `Latency-Bound`, `Occupancy-Bound`, or `Mixed`.
-8. Query `kernel_KBS` for evidence-backed tactics relevant to kernel type, backend, architecture, and bottleneck.
+8. Query `kernel-KBS` for evidence-backed tactics relevant to kernel type, backend, architecture, and bottleneck.
 9. Write a one-variable hypothesis to `<version_dir>/hypothesis.txt` before editing code.
 10. Generate exactly one next kernel version from the hypothesis.
 11. Re-run correctness and NCU for the new version.
 12. Compare against the previous and best versions.
 13. Repeat until `N` iterations are complete.
-14. Select the best correct version, run `kernel_benchmark`, and write `final_report.md`.
+14. Select the best correct version, run `kernel-benchmark`, and write `final_report.md`.
 
 Do not code multiple optimization ideas into one iteration. If two variables change, the measurement cannot explain the outcome.
 
@@ -112,9 +112,9 @@ Keep claims tied to artifacts. Do not state a speedup unless it appears in profi
 
 | Need | Load |
 |---|---|
-| Detailed correctness or profiling options | `kernel_profile/scripts/scripts.md` |
-| NCU metric definitions | `kernel_profile/reference/NCU.md` |
-| KBS query syntax or schema | `kernel_KBS/SKILL.md`, then `kernel_KBS/references/examples.md` if needed |
-| Benchmark options | `kernel_benchmark/scripts/scripts.md` |
+| Detailed correctness or profiling options | `kernel-profile/scripts/scripts.md` |
+| NCU metric definitions | `kernel-profile/reference/NCU.md` |
+| KBS query syntax or schema | `kernel-KBS/SKILL.md`, then `kernel-KBS/references/examples.md` if needed |
+| Benchmark options | `kernel-benchmark/scripts/scripts.md` |
 | Hypothesis format | `references/hypothesis.md` |
 | Final report template | `references/report_template.md` |
