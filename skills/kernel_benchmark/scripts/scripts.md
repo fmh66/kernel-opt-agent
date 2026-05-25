@@ -2,13 +2,14 @@
 
 ## benchmark.py
 
-Benchmarks a CUDA-C++, CUTLASS, CuTe DSL, or Triton solution against a PyTorch reference.
+Benchmarks a CUDA-C++, CUTLASS, CuTe DSL, or Triton solution against selectable PyTorch eager, torch.compile, and FlashInfer baselines.
 
 The default timing method is KernelBench-style CUDA event timing with explicit trial control and L2 cache thrashing. Use `--timing-method=host_time` only when investigating Python, JIT, runtime, or launch overhead.
 
 ```bash
 python scripts/benchmark.py <solution.{cu,py}> \
   --implementation=auto \
+  --baselines=pytorch-eager \
   --ref=ref.py \
   --output-dir=bench_out \
   --M=1024 --N=1024
@@ -40,6 +41,8 @@ python scripts/benchmark.py cute_kernel.py \
   --M=1024 --N=1024
 ```
 
+FlashInfer baselines use the same `reference(**kwargs)` function. When `--baselines=flashinfer` is selected, the runner passes `baseline="flashinfer"` in `kwargs`; otherwise no `baseline` kwarg is provided.
+
 ### Options
 
 | Option | Default | Meaning |
@@ -48,6 +51,7 @@ python scripts/benchmark.py cute_kernel.py \
 | `--backend=<...>` | `auto` | Compatibility alias for `--implementation` |
 | `--ref=<path>` | required | Python reference defining `reference(**kwargs)` |
 | `--output-dir=<dir>` | required | Directory for `benchmark.md` |
+| `--baselines=<list>` | `pytorch-eager` | Comma-separated baselines: `pytorch-eager`, `torch-compile`, `flashinfer`, `all`, or `none` |
 | `--timing-method=<cuda_event/host_time>` | `cuda_event` | Timing backend |
 | `--num-warmup=<n>` | `5` | Warmup calls for timing |
 | `--num-trials=<n>` | `100` | Measured trials for timing |
