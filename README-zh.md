@@ -113,6 +113,12 @@ GPU runtime 依赖取决于本地环境。Benchmark 和 profiling 可能需要�
 
 如果需要托管式完整优化流程，可以使用 `kernel-loop` 并指定固定迭代预算。它会把 profile、证据检索、hypothesis、单次变量修改、最终 benchmark 和报告串成一个 workflow。
 
+举例：
+
+```bash
+[$kernel-loop] 帮我优化 <kernel.cu>，迭代5次，用 flashinfer 进行 benchmark ，输出到 <output>
+```
+
 完整流程和命令细节见各 skill 的 `SKILL.md`：
 
 - [`skills/kernel-KBS/SKILL.md`](skills/kernel-KBS/SKILL.md)
