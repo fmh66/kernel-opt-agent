@@ -1,9 +1,9 @@
 ---
-name: kernel_benchmark
+name: kernel-benchmark
 description: Standalone kernel benchmarking skill for cuda-cpp, cutlass, cute-dsl, and triton implementations. Use when the user wants to compare a custom CUDA/CUTLASS .cu kernel or CuTe DSL/Triton .py kernel against selectable PyTorch eager, torch.compile, or FlashInfer baselines, validate correctness, measure execution time with KernelBench-style CUDA event timing, or generate benchmark.md for kernel optimization results.
 ---
 
-# kernel_benchmark
+# kernel-benchmark
 
 Use this skill to benchmark a custom GPU kernel against a PyTorch reference implementation.
 
