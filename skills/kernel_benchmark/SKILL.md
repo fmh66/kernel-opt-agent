@@ -1,6 +1,6 @@
 ---
 name: kernel_benchmark
-description: Standalone kernel benchmarking skill for cuda-cpp, cutlass, cute-dsl, and triton implementations. Use when the user wants to compare a custom CUDA/CUTLASS .cu kernel or CuTe DSL/Triton .py kernel against a PyTorch reference, validate correctness, measure execution time with KernelBench-style CUDA event timing, report PyTorch eager and torch.compile baselines, or generate benchmark.md for kernel optimization results.
+description: Standalone kernel benchmarking skill for cuda-cpp, cutlass, cute-dsl, and triton implementations. Use when the user wants to compare a custom CUDA/CUTLASS .cu kernel or CuTe DSL/Triton .py kernel against selectable PyTorch eager, torch.compile, or FlashInfer baselines, validate correctness, measure execution time with KernelBench-style CUDA event timing, or generate benchmark.md for kernel optimization results.
 ---
 
 # kernel_benchmark
@@ -9,21 +9,22 @@ Use this skill to benchmark a custom GPU kernel against a PyTorch reference impl
 
 ## What It Does
 
-`scripts/benchmark.py` produces a 3-way comparison:
+`scripts/benchmark.py` compares a solution against selectable baselines:
 
 | Variant | Timing method |
 |---|---|
 | Custom CUDA-C++/CUTLASS/CuTe DSL/Triton solution | `cuda_event` by default; optional `host_time` |
-| PyTorch eager reference | same timing method |
-| `torch.compile` reference | same timing method |
+| PyTorch eager reference | same timing method; default baseline |
+| `torch.compile` reference | same timing method; opt in with `--baselines=torch-compile` |
+| FlashInfer baseline | same timing method; opt in with `--baselines=flashinfer` |
 
-The benchmark validates correctness against both eager and compiled PyTorch references before timing. The report is written to `<output-dir>/benchmark.md`.
+The benchmark validates correctness against the PyTorch eager reference before timing. Selected baselines are also checked against the eager reference. The report is written to `<output-dir>/benchmark.md`.
 
 Default timing uses KernelBench-style CUDA events with explicit warmup/trial counts and cold-cache L2 thrashing. Use `--timing-method=host_time` only when diagnosing Python/runtime overhead.
 
 ## Required Interfaces
 
-### Reference
+### Reference And Baselines
 
 The reference file must define:
 
@@ -32,7 +33,9 @@ def reference(**kwargs):
     ...
 ```
 
-The function should operate on PyTorch tensors in place. Optional scalar and dimension parameters are passed through `kwargs`.
+The function receives the same tensor/scalar kwargs as the solution. It may update output tensors in place or return a tensor, tuple/list of tensors, or dict keyed by output name. Optional scalar and dimension parameters are passed through `kwargs`.
+
+When `--baselines=flashinfer` is selected, the runner calls the same function with `baseline="flashinfer"` in `kwargs`. When no `baseline` kwarg is provided, `reference(**kwargs)` is the PyTorch eager reference.
 
 ### CUDA-C++ / CUTLASS Solution
 
@@ -84,6 +87,7 @@ CUDA-C++:
 ```bash
 python scripts/benchmark.py kernel.cu \
   --implementation=cuda-cpp \
+  --baselines=pytorch-eager \
   --ref=ref.py \
   --output-dir=bench_out \
   --M=1024 --N=1024
@@ -94,6 +98,7 @@ CUTLASS:
 ```bash
 python scripts/benchmark.py cutlass_kernel.cu \
   --implementation=cutlass \
+  --baselines=pytorch-eager,torch-compile \
   --ref=ref.py \
   --output-dir=bench_out \
   --M=1024 --N=1024
@@ -104,6 +109,7 @@ Triton:
 ```bash
 python scripts/benchmark.py kernel.py \
   --implementation=triton \
+  --baselines=pytorch-eager,flashinfer \
   --ref=ref.py \
   --output-dir=bench_out \
   --M=1024 --N=1024
@@ -129,6 +135,7 @@ python scripts/benchmark.py cute_kernel.py \
 | `--ref=<path>` | required | Python reference defining `reference(**kwargs)` |
 | `--output-dir=<dir>` | required | Directory for `benchmark.md` |
 | `--implementation=<auto/cuda-cpp/cute-dsl/cutlass/triton>` | `auto` | Solution implementation; `--backend` is an alias |
+| `--baselines=<list>` | `pytorch-eager` | Comma-separated baselines from `pytorch-eager`, `torch-compile`, `flashinfer`, or `all`/`none` |
 | `--timing-method=<cuda_event/host_time>` | `cuda_event` | Timing backend |
 | `--num-warmup=<n>` | `5` | Warmup calls for fixed-trial timing |
 | `--num-trials=<n>` | `100` | Measured trials for fixed-trial timing |
@@ -147,7 +154,7 @@ Keep dimensions, seed, pointer sizing, GPU, and tolerances fixed when comparing 
 
 | File | Purpose |
 |---|---|
-| `<output-dir>/benchmark.md` | Correctness status, GPU/arch/dimensions, timing config, mean/median/p20/p80/min/max/std/sample-count timing, and speedups versus PyTorch eager and `torch.compile` |
+| `<output-dir>/benchmark.md` | Correctness status, GPU/arch/dimensions, timing config, mean/median/p20/p80/min/max/std/sample-count timing, and speedups versus selected baselines |
 
 If correctness fails, inspect the output tensors before using the timing result for optimization decisions.
 

@@ -65,6 +65,7 @@ _CTYPE_MAP = {
 
 _INT_TYPES = {"int", "long", "size_t", "unsigned int"}
 SUPPORTED_IMPLEMENTATIONS = ("auto", "cuda-cpp", "cute-dsl", "cutlass", "triton")
+SUPPORTED_BASELINES = ("pytorch-eager", "torch-compile", "flashinfer")
 CUDA_IMPLEMENTATIONS = {"cuda", "cuda-cpp", "cutlass"}
 PYTHON_IMPLEMENTATIONS = {"cute-dsl", "triton"}
 
@@ -86,6 +87,15 @@ class TimingConfig:
     discard_first: int
     prewarm_calls: int
     device: int
+
+
+@dataclass
+class CandidateBaseline:
+    name: str
+    label: str
+    callable: object
+    inputs: dict
+    output_names: list
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +199,43 @@ def _normalize_implementation(implementation):
         allowed = ", ".join(SUPPORTED_IMPLEMENTATIONS)
         raise ValueError(f"Unsupported implementation: {implementation}. Expected one of: {allowed}")
     return value
+
+
+def _parse_baselines(value):
+    normalized = (value or "").strip().lower()
+    if normalized in {"", "none", "off", "false", "0"}:
+        return []
+    if normalized in {"all", "default"}:
+        return list(SUPPORTED_BASELINES)
+    aliases = {
+        "eager": "pytorch-eager",
+        "torch": "pytorch-eager",
+        "torch-eager": "pytorch-eager",
+        "torch_eager": "pytorch-eager",
+        "pytorch": "pytorch-eager",
+        "pytorch_eager": "pytorch-eager",
+        "compile": "torch-compile",
+        "compiled": "torch-compile",
+        "torch.compile": "torch-compile",
+        "torch_compile": "torch-compile",
+        "pytorch-compile": "torch-compile",
+        "pytorch_compile": "torch-compile",
+        "flash-infer": "flashinfer",
+        "flash_infer": "flashinfer",
+    }
+    baselines = []
+    for item in normalized.split(","):
+        name = aliases.get(item.strip(), item.strip())
+        if not name:
+            continue
+        if name not in SUPPORTED_BASELINES:
+            allowed = ", ".join(SUPPORTED_BASELINES + ("all", "none"))
+            raise ValueError(
+                f"Unsupported baseline: {item}. Expected one of: {allowed}"
+            )
+        if name not in baselines:
+            baselines.append(name)
+    return baselines
 
 
 # ---------------------------------------------------------------------------
@@ -308,27 +355,107 @@ def _setup_solution(solution_file, implementation, dim_values, ptr_size_override
 
 
 # ---------------------------------------------------------------------------
-# Torch reference helpers
+# Baseline helpers
 # ---------------------------------------------------------------------------
 
-def _make_torch_fns(ref_fn, ref_inputs_snapshot, output_names):
-    """Build PyTorch timing closures.
+def _make_reference_fn(ref_fn, ref_inputs_snapshot, output_names, baseline=None):
+    """Build a static-input reference closure."""
+    static_inputs = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
 
-    The default eager/compiled closures reuse static CUDA tensors so their timing
-    is comparable with custom kernels that run in-place on preallocated buffers.
-    """
+    def run():
+        call_inputs = _prepare_reference_call_inputs(static_inputs, output_names)
+        if baseline is not None:
+            call_inputs["baseline"] = baseline
+        result = ref_fn(**call_inputs)
+        _apply_baseline_result(result, static_inputs, output_names)
+
+    return CandidateBaseline(
+        name="pytorch-eager",
+        label="PyTorch Eager",
+        callable=run,
+        inputs=static_inputs,
+        output_names=list(output_names),
+    )
+
+
+def _make_torch_compile_fn(ref_fn, ref_inputs_snapshot, output_names):
+    """Build a static-input torch.compile closure only when requested."""
     compile_fn = torch.compile(ref_fn, dynamic=False)
+    static_inputs = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
 
-    eager_static_inputs = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
-    compile_static_inputs = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
+    def run():
+        result = compile_fn(**_prepare_reference_call_inputs(static_inputs, output_names))
+        _apply_baseline_result(result, static_inputs, output_names)
 
-    def eager_static():
-        ref_fn(**_prepare_reference_call_inputs(eager_static_inputs, output_names))
+    return CandidateBaseline(
+        name="torch-compile",
+        label="Torch Compile",
+        callable=run,
+        inputs=static_inputs,
+        output_names=list(output_names),
+    )
 
-    def compiled_static():
-        compile_fn(**_prepare_reference_call_inputs(compile_static_inputs, output_names))
 
-    return eager_static, compiled_static, compile_fn
+def _apply_baseline_result(result, baseline_inputs, output_names):
+    """Accept either in-place baselines or functional return values."""
+    if result is None:
+        return
+    if isinstance(result, dict):
+        for name, value in result.items():
+            baseline_inputs[name] = value
+        return
+    if isinstance(result, torch.Tensor):
+        if len(output_names) != 1:
+            raise ValueError(
+                "A tensor return value is only supported for single-output baselines"
+            )
+        baseline_inputs[output_names[0]] = result
+        return
+    if isinstance(result, (list, tuple)):
+        if len(result) != len(output_names):
+            raise ValueError(
+                f"Baseline returned {len(result)} tensors for {len(output_names)} output(s)"
+            )
+        for name, value in zip(output_names, result):
+            baseline_inputs[name] = value
+        return
+    raise TypeError(
+        "Baseline must update outputs in-place or return a tensor, tuple/list, or dict"
+    )
+
+
+def _make_flashinfer_baseline(ref_mod, ref_inputs_snapshot, output_names):
+    candidate = _make_reference_fn(
+        ref_mod.reference, ref_inputs_snapshot, output_names, baseline="flashinfer"
+    )
+    candidate.name = "flashinfer"
+    candidate.label = "FlashInfer"
+    return candidate
+
+
+def _make_candidate_baselines(ref_mod, ref_inputs_snapshot, output_names, requested):
+    candidates = []
+    for name in requested:
+        if name == "pytorch-eager":
+            candidates.append(
+                _make_reference_fn(ref_mod.reference, ref_inputs_snapshot, output_names)
+            )
+            continue
+        if name == "torch-compile":
+            candidate = _make_torch_compile_fn(
+                ref_mod.reference, ref_inputs_snapshot, output_names
+            )
+            candidates.append(candidate)
+            continue
+        if name == "flashinfer":
+            candidates.append(
+                _make_flashinfer_baseline(
+                    ref_mod, ref_inputs_snapshot, output_names
+                )
+            )
+            continue
+        raise ValueError(f"Unsupported baseline: {name}")
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +598,8 @@ def _check_correctness(sol_tensors, ref_inputs_snapshot, ref_fn, output_names,
     """Run ref on cloned inputs and compare outputs with torch.allclose."""
     cloned = {k: _clone_value(v) for k, v in ref_inputs_snapshot.items()}
     ref_call_inputs = _prepare_reference_call_inputs(cloned, output_names)
-    ref_fn(**ref_call_inputs)
+    result = ref_fn(**ref_call_inputs)
+    _apply_baseline_result(result, cloned, output_names)
     torch.cuda.synchronize()
 
     all_pass = True
@@ -487,17 +615,26 @@ def _check_correctness(sol_tensors, ref_inputs_snapshot, ref_fn, output_names,
     return all_pass
 
 
-def _run_correctness(label, sol_tensors, ref_inputs_snapshot, ref_fn, compile_fn,
+def _run_correctness(label, sol_tensors, ref_inputs_snapshot, ref_fn,
                      output_names, atol, rtol):
-    """Check solution against PyTorch eager and compiled reference."""
-    ok = True
+    """Check solution against the PyTorch eager reference."""
     print(f"[correctness] checking {label} vs PyTorch eager...")
     ok = _check_correctness(sol_tensors, ref_inputs_snapshot, ref_fn,
                             output_names, atol, rtol)
-    print(f"[correctness] checking {label} vs PyTorch compile...")
-    ok = _check_correctness(sol_tensors, ref_inputs_snapshot, compile_fn,
-                            output_names, atol, rtol) and ok
     print(f"[correctness] {'PASS' if ok else 'FAIL'}\n")
+    return ok
+
+
+def _run_baseline_correctness(baseline, ref_inputs_snapshot, ref_fn, atol, rtol):
+    """Check a timed baseline against the PyTorch eager reference."""
+    print(f"[correctness] checking {baseline.label} baseline vs PyTorch eager...")
+    baseline.callable()
+    torch.cuda.synchronize()
+    ok = _check_correctness(
+        baseline.inputs, ref_inputs_snapshot, ref_fn,
+        baseline.output_names, atol, rtol,
+    )
+    print(f"[correctness] {baseline.label} {'PASS' if ok else 'FAIL'}\n")
     return ok
 
 
@@ -505,29 +642,19 @@ def _run_correctness(label, sol_tensors, ref_inputs_snapshot, ref_fn, compile_fn
 # Report
 # ---------------------------------------------------------------------------
 
+def _format_metric(value):
+    if isinstance(value, int):
+        return str(value)
+    return f"{float(value):.4f}"
+
+
 def build_report(solution_file, ref_file, dim_values, arch,
-                 sol_ms, sol_std,
-                 torch_eager_ms, torch_eager_std,
-                 torch_compile_ms, torch_compile_std,
                  correctness_pass,
-                 sol_stats=None, torch_eager_stats=None, torch_compile_stats=None,
+                 variants,
                  timing_config=None):
     gpu = torch.cuda.get_device_name(torch.cuda.current_device())
-    sol_stats = sol_stats or {"mean": sol_ms, "std": sol_std, "median": sol_ms, "min": sol_ms, "max": sol_ms}
-    torch_eager_stats = torch_eager_stats or {
-        "mean": torch_eager_ms,
-        "std": torch_eager_std,
-        "median": torch_eager_ms,
-        "min": torch_eager_ms,
-        "max": torch_eager_ms,
-    }
-    torch_compile_stats = torch_compile_stats or {
-        "mean": torch_compile_ms,
-        "std": torch_compile_std,
-        "median": torch_compile_ms,
-        "min": torch_compile_ms,
-        "max": torch_compile_ms,
-    }
+    labels = [label for label, _ in variants]
+    stats_by_label = {label: stats for label, stats in variants}
 
     lines = [
         "# Benchmark Report",
@@ -543,29 +670,47 @@ def build_report(solution_file, ref_file, dim_values, arch,
         f"| **Timing Method** | {timing_config.method if timing_config else 'cuda_event'} |",
         f"| **Prewarm Calls** | {timing_config.prewarm_calls if timing_config else 1} |",
         "| **Cache Mode** | torch_l2_thrash |",
-        "| **Timing Scope** | Preallocated/static tensors; solution and PyTorch baselines exclude per-call input cloning. |",
+        "| **Timing Scope** | Preallocated/static tensors; solution and selected baselines exclude per-call input cloning. |",
         "",
         "## Timing",
         "",
-        "| Metric | Solution | PyTorch Eager | PyTorch Compile |",
-        "|--------|----------:|-------------:|----------------:|",
-        f"| Mean Time (ms)      | {sol_stats['mean']:.4f} | {torch_eager_stats['mean']:.4f} | {torch_compile_stats['mean']:.4f} |",
-        f"| Median Time (ms)    | {sol_stats['median']:.4f} | {torch_eager_stats['median']:.4f} | {torch_compile_stats['median']:.4f} |",
-        f"| P20 Time (ms)       | {sol_stats['p20']:.4f} | {torch_eager_stats['p20']:.4f} | {torch_compile_stats['p20']:.4f} |",
-        f"| P80 Time (ms)       | {sol_stats['p80']:.4f} | {torch_eager_stats['p80']:.4f} | {torch_compile_stats['p80']:.4f} |",
-        f"| Min Time (ms)       | {sol_stats['min']:.4f} | {torch_eager_stats['min']:.4f} | {torch_compile_stats['min']:.4f} |",
-        f"| Max Time (ms)       | {sol_stats['max']:.4f} | {torch_eager_stats['max']:.4f} | {torch_compile_stats['max']:.4f} |",
-        f"| Std dev (ms)        | {sol_stats['std']:.4f} | {torch_eager_stats['std']:.4f} | {torch_compile_stats['std']:.4f} |",
-        f"| Samples             | {sol_stats['num_trials']} | {torch_eager_stats['num_trials']} | {torch_compile_stats['num_trials']} |",
+        f"| Metric | {' | '.join(labels)} |",
+        f"|--------|{'|'.join(['----------:'] * len(labels))}|",
     ]
-    for label, base_stats in (
-        ("vs PyTorch Eager", torch_eager_stats),
-        ("vs PyTorch Compile", torch_compile_stats),
-    ):
-        mean_speedup = base_stats["mean"] / sol_stats["mean"] if sol_stats["mean"] > 0 else float("inf")
-        median_speedup = base_stats["median"] / sol_stats["median"] if sol_stats["median"] > 0 else float("inf")
-        lines.append(f"| Speedup ({label}, mean)   | {mean_speedup:.2f}x | - | - |")
-        lines.append(f"| Speedup ({label}, median) | {median_speedup:.2f}x | - | - |")
+    metric_rows = [
+        ("Mean Time (ms)", "mean"),
+        ("Median Time (ms)", "median"),
+        ("P20 Time (ms)", "p20"),
+        ("P80 Time (ms)", "p80"),
+        ("Min Time (ms)", "min"),
+        ("Max Time (ms)", "max"),
+        ("Std dev (ms)", "std"),
+        ("Samples", "num_trials"),
+    ]
+    for row_label, key in metric_rows:
+        values = [_format_metric(stats_by_label[label][key]) for label in labels]
+        lines.append(f"| {row_label} | {' | '.join(values)} |")
+
+    sol_stats = stats_by_label.get("Solution")
+    if sol_stats is not None:
+        for label in labels:
+            if label == "Solution":
+                continue
+            base_stats = stats_by_label[label]
+            mean_speedup = (
+                base_stats["mean"] / sol_stats["mean"]
+                if sol_stats["mean"] > 0 else float("inf")
+            )
+            median_speedup = (
+                base_stats["median"] / sol_stats["median"]
+                if sol_stats["median"] > 0 else float("inf")
+            )
+            blank_cells = ["-"] * len(labels)
+            blank_cells[0] = f"{mean_speedup:.2f}x"
+            lines.append(f"| Speedup (vs {label}, mean) | {' | '.join(blank_cells)} |")
+            blank_cells = ["-"] * len(labels)
+            blank_cells[0] = f"{median_speedup:.2f}x"
+            lines.append(f"| Speedup (vs {label}, median) | {' | '.join(blank_cells)} |")
     lines.append("")
 
     return "\n".join(lines)
@@ -577,7 +722,7 @@ def build_report(solution_file, ref_file, dim_values, arch,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Benchmark CUDA-C++/CUTLASS/CuTe DSL/Triton kernel vs PyTorch (eager + compile)",
+        description="Benchmark CUDA-C++/CUTLASS/CuTe DSL/Triton kernel vs selectable baselines",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("solution_file", help="Path to solution file (.cu or .py)")
@@ -589,6 +734,10 @@ def main():
                         help="Path to reference .py defining reference(**kwargs)")
     parser.add_argument("--output-dir", type=str, required=True,
                         help="Directory for output files")
+    parser.add_argument("--baselines", type=str, default="pytorch-eager",
+                        help=("Comma-separated baselines to time: pytorch-eager,"
+                              "torch-compile,flashinfer,all,none "
+                              "(default: pytorch-eager)"))
     parser.add_argument("--timing-method", type=str, default="cuda_event",
                         choices=["cuda_event", "host_time"],
                         help="Timing method: cuda_event fixed trials or host_time end-to-end timing")
@@ -611,6 +760,7 @@ def main():
 
     args, unknown = parser.parse_known_args()
     dim_values = _parse_dim_values(unknown)
+    requested_baselines = _parse_baselines(args.baselines)
 
     torch.cuda.set_device(args.gpu)
     arch = args.arch if args.arch else _detect_arch(args.gpu)
@@ -635,40 +785,42 @@ def main():
     inputs_snapshot = {k: _clone_value(v) for k, v in state.ref_inputs.items()}
 
     sol_fn = state.callable
-    (
-        torch_eager_fn,
-        torch_compile_fn_timing,
-        torch_compile_ref,
-    ) = _make_torch_fns(
-        ref_mod.reference, inputs_snapshot, state.output_names)
+    baselines = _make_candidate_baselines(
+        ref_mod, inputs_snapshot, state.output_names, requested_baselines)
 
     print(f"[benchmark] solution  : {solution_file}")
     print(f"[benchmark] backend   : {state.backend}")
     print(f"[benchmark] reference : {ref_file}")
     print(f"[benchmark] arch      : {arch}")
     print(f"[benchmark] dims      : {dim_values}")
+    print(f"[benchmark] baselines : {', '.join(b.label for b in baselines) if baselines else 'none'}")
     print()
 
-    # CuTe DSL, Triton, and torch.compile may lazily initialize runtime state.
+    # CuTe DSL, Triton, torch.compile, and FlashInfer may lazily initialize runtime state.
     # Keep one-time setup out of correctness and timing measurements.
     _prewarm(sol_fn, timing_cfg.prewarm_calls, args.gpu)
+    for baseline in baselines:
+        _prewarm(baseline.callable, timing_cfg.prewarm_calls, args.gpu)
 
     # --- correctness ----------------------------------------------------
 
     ok = _run_correctness(
         "solution", state.tensors, inputs_snapshot,
-        ref_mod.reference, torch_compile_ref,
-        state.output_names, args.atol, args.rtol,
+        ref_mod.reference, state.output_names, args.atol, args.rtol,
     )
+    for baseline in baselines:
+        ok = _run_baseline_correctness(
+            baseline, inputs_snapshot, ref_mod.reference, args.atol, args.rtol,
+        ) and ok
 
     # --- timing ---------------------------------------------------------
 
-    sol_ms, sol_std, sol_stats = _run_variant(
-        "Solution", sol_fn, timing_cfg)
-    torch_eager_ms, torch_eager_std, torch_eager_stats = _run_variant(
-        "PyTorch eager", torch_eager_fn, timing_cfg)
-    torch_compile_ms, torch_compile_std, torch_compile_stats = _run_variant(
-        "PyTorch compile", torch_compile_fn_timing, timing_cfg)
+    _, _, sol_stats = _run_variant("Solution", sol_fn, timing_cfg)
+    variants = [("Solution", sol_stats)]
+    for baseline in baselines:
+        _, _, baseline_stats = _run_variant(
+            baseline.label, baseline.callable, timing_cfg)
+        variants.append((baseline.label, baseline_stats))
 
     # --- report ---------------------------------------------------------
 
@@ -677,13 +829,8 @@ def main():
         ref_file=ref_file,
         dim_values=dim_values,
         arch=arch,
-        sol_ms=sol_ms, sol_std=sol_std,
-        torch_eager_ms=torch_eager_ms, torch_eager_std=torch_eager_std,
-        torch_compile_ms=torch_compile_ms, torch_compile_std=torch_compile_std,
         correctness_pass=ok,
-        sol_stats=sol_stats,
-        torch_eager_stats=torch_eager_stats,
-        torch_compile_stats=torch_compile_stats,
+        variants=variants,
         timing_config=timing_cfg,
     )
     report_path = output_dir / "benchmark.md"
