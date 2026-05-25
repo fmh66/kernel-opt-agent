@@ -113,6 +113,12 @@ GPU runtime dependencies are environment-specific. Benchmarking and profiling ma
 
 For a fully managed loop, use `kernel-loop` with a fixed iteration budget. It runs the same profile, evidence, hypothesis, one-change iteration, and final benchmark/report sequence as a single workflow.
 
+Example prompt:
+
+```text
+[$kernel-loop] help me optimize <kernel.cu>, run 5 iterations, benchmark with flashinfer, and write outputs to <output>s
+```
+
 See each skill's `SKILL.md` for workflow and command details:
 
 - [`skills/kernel-KBS/SKILL.md`](skills/kernel-KBS/SKILL.md)
