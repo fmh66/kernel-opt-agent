@@ -1,5 +1,7 @@
 # Kernel Opt Agent
 
+[English](./README.md)
+
 本仓库提供三个用于 GPU Kernel 工作的 Claude Code / Codex skill：
 
 - [`kernel_KBS`](skills/kernel_KBS/SKILL.md)：面向 CUDA、Triton、CuTe DSL、CUTLASS 以及 Ampere/Hopper/Blackwell Kernel 研究的只读知识库检索 skill。

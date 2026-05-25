@@ -1,5 +1,7 @@
 # Kernel Opt Agent
 
+[中文](./README-zh.md)
+
 This repository provides three Claude Code / Codex skills for GPU kernel work:
 
 - [`kernel_KBS`](skills/kernel_KBS/SKILL.md): a read/query knowledge base for CUDA, Triton, CuTe DSL, CUTLASS, and Ampere/Hopper/Blackwell kernel research.
