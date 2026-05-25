@@ -1,6 +1,8 @@
 # Kernel Opt Agent
 
-Kernel Opt Agent 提供三个用于 GPU Kernel 工作的 Claude Code / Codex skill：
+[English](./README.md)
+
+本仓库提供三个用于 GPU Kernel 工作的 Claude Code / Codex skill：
 
 - [`kernel_KBS`](skills/kernel_KBS/SKILL.md)：面向 CUDA、Triton、CuTe DSL、CUTLASS 以及 Ampere/Hopper/Blackwell Kernel 研究的只读知识库检索 skill。
 - [`kernel_benchmark`](skills/kernel_benchmark/SKILL.md)：面向 CUDA-C++、CUTLASS、CuTe DSL 和 Triton Kernel 的独立 benchmark workflow，用 PyTorch eager、`torch.compile` 和 FlashInfer reference 做正确性和延迟对比。
