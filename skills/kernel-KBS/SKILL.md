@@ -1,11 +1,11 @@
 ---
-name: kernel_KBS
+name: kernel-KBS
 description: Corpus-backed GPU kernel knowledge base for CUDA, Triton, CuTe, CUTLASS, and Ampere/Hopper/Blackwell kernel research. Use when the user needs to search merged kernel PR pages, inspect PR diff/provenance artifacts, find KernelWiki synthesis pages, query blog/doc/contest notes, or retrieve evidence-backed implementation patterns by hardware feature, technique, repo, language, or kernel type. Do not use for environment checks, correctness checks, Nsight Compute profiling, benchmarking, or iterative optimization bookkeeping.
 ---
 
-# kernel_KBS
+# kernel-KBS
 
-`kernel_KBS` is a read/query skill. It retrieves evidence-backed GPU kernel knowledge from a SQLite-centered corpus. It does not run kernels, profile kernels, benchmark kernels, or manage optimization experiments.
+`kernel-KBS` is a read/query skill. It retrieves evidence-backed GPU kernel knowledge from a SQLite-centered corpus. It does not run kernels, profile kernels, benchmark kernels, or manage optimization experiments.
 
 ## Default Authority
 
@@ -26,7 +26,7 @@ Requires explicit human permission in the current task:
 
 ## First Command
 
-All commands run from the `kernel_KBS` skill root. Use `scripts/kbs.py` as the single front door.
+All commands run from the `kernel-KBS` skill root. Use `scripts/kbs.py` as the single front door.
 
 Start with SQLite query:
 
@@ -94,7 +94,7 @@ Core storage map:
 | Knowledge pages | `store/docs/wiki/` | Curated synthesis pages for answers. |
 | Ledgers | `store/docs/ledgers/` | Candidate/core/source ledgers and policy inputs. |
 | Artifacts | `store/corpus/artifacts/` | Diffs, code assets, provenance bundles. |
-| Indexes | `store/indexes/kernel_kbs.sqlite` | SQLite metadata, relationships, and contentless FTS. |
+| Indexes | `store/indexes/kernel-KBS.sqlite` | SQLite metadata, relationships, and contentless FTS. |
 | State | `store/state/` | Structured maintenance state: `refresh/`, `versions/`, and `audits/{content,refresh,validation}/`. |
 
 Full Markdown bodies remain under `store/docs/`. SQLite stores metadata, paths, short excerpts, relationships, artifact pointers, performance claims, and FTS terms. It does not store a second readable copy of every Markdown body.
