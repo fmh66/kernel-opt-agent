@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_SKILLS = ("kernel_KBS", "kernel_benchmark", "kernel_profile")
+DEFAULT_SKILLS = ("kernel-KBS", "kernel-benchmark", "kernel-profile", "kernel-loop")
 TARGETS = ("claude", "codex")
 
 
@@ -116,7 +116,7 @@ def install_skill(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Install kernel_KBS, kernel_benchmark, and kernel_profile for Claude Code and Codex."
+        description="Install kernel-KBS, kernel-benchmark, kernel-profile, and kernel-loop for Claude Code and Codex."
     )
     parser.add_argument(
         "--target",
