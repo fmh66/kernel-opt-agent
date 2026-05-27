@@ -1,0 +1,38 @@
+Version:
+- Source: v8
+- Target: v9
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0520 ms (neutral)
+- Bottleneck: Memory-latency-bound — occupancy tuning alone insufficient
+- Key metrics: num_warps=4 with v3 structure similar to v3 with num_warps=8
+- NCU symptom to explain: Warp count doesn't affect memory-latency-bound kernel
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Combine v6's precomputed offsets with num_warps=4 for best of both
+- Conflicts or applicability limits: None
+
+Single change:
+- Change: Use v6's precomputed offset structure with num_warps=4
+- Scope: v6 kernel + num_warps=4
+- Things intentionally not changed: Grid (128 blocks), 2-head fusion, BLOCK_D
+
+Rationale:
+- Why: v6 precomputed offsets save instructions; num_warps=4 may reduce register pressure allowing more blocks/SM
+
+Expected metric movement:
+- Improve: Instruction count, occupancy
+- Watch for regressions: Latency hiding with fewer warps
+
+Risk:
+- Correctness risk: Low
+- Performance risk: Low-Medium
+
+Evidence used:
+- NCU artifacts: v6/ncu_summary.md, v8/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+
+Decision rule:
+- Accept if: runtime < 0.050 ms
+- Reject if: neutral or worse

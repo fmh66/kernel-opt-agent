@@ -144,7 +144,7 @@ python scripts/benchmark.py cute_kernel.py \
 | `--ptr-size=<n>` | `0` | Override CUDA pointer buffer element count |
 | `--arch=<sm_XX>` | auto | GPU architecture, for messages and CUDA compile hint |
 | `--gpu=<id>` | `0` | CUDA device index |
-| `--atol`, `--rtol` | `1e-4`, `1e-3` | Correctness tolerances |
+| `--atol`, `--rtol` | `ref.py` module-level if set, else `1e-4` / `1e-3` | Correctness tolerances. CLI flag takes highest precedence, then `ref.py` module-level `atol`/`rtol`, then internal defaults. Set `atol=1e-2, rtol=1e-2` in `ref.py` for bfloat16 FlashInfer baselines. |
 | `--seed=<n>` | `42` | Random seed |
 | `--NAME=VALUE` | as needed | Integer dimensions/scalars used by the kernel signature or Triton setup |
 

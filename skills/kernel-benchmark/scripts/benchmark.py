@@ -141,6 +141,7 @@ def _parse_signature(cu_file):
 def _load_reference(ref_file):
     spec = importlib.util.spec_from_file_location("_ref", ref_file)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["_ref"] = mod
     spec.loader.exec_module(mod)
     if not hasattr(mod, "reference"):
         raise AttributeError(f"'{ref_file}' must define reference(**kwargs)")
@@ -755,8 +756,10 @@ def main():
                         help="GPU arch e.g. sm_90 (auto-detected if omitted)")
     parser.add_argument("--gpu", type=int, default=0, help="GPU device index")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--atol", type=float, default=1e-4, help="Correctness atol (default: 1e-4)")
-    parser.add_argument("--rtol", type=float, default=1e-3, help="Correctness rtol (default: 1e-3)")
+    parser.add_argument("--atol", type=float, default=None,
+                        help="Absolute tolerance (default: 1e-4, or ref.py module-level atol if set)")
+    parser.add_argument("--rtol", type=float, default=None,
+                        help="Relative tolerance (default: 1e-3, or ref.py module-level rtol if set)")
 
     args, unknown = parser.parse_known_args()
     dim_values = _parse_dim_values(unknown)
@@ -782,6 +785,13 @@ def main():
     state = _setup_solution(solution_file, args.backend, dim_values,
                             args.ptr_size, arch, args.seed)
     ref_mod = _load_reference(ref_file)
+
+    # Resolve tolerances: CLI flags take precedence, then ref.py module-level
+    # atol/rtol overrides, then hardcoded internal defaults.
+    atol = args.atol if args.atol is not None else float(getattr(ref_mod, "atol", 1e-4))
+    rtol = args.rtol if args.rtol is not None else float(getattr(ref_mod, "rtol", 1e-3))
+    tol_source = "CLI" if args.atol is not None else ("ref.py" if hasattr(ref_mod, "atol") else "default")
+    print(f"[benchmark] tolerances: atol={atol}, rtol={rtol} (source: {tol_source})")
     inputs_snapshot = {k: _clone_value(v) for k, v in state.ref_inputs.items()}
 
     sol_fn = state.callable
@@ -806,11 +816,11 @@ def main():
 
     ok = _run_correctness(
         "solution", state.tensors, inputs_snapshot,
-        ref_mod.reference, state.output_names, args.atol, args.rtol,
+        ref_mod.reference, state.output_names, atol, rtol,
     )
     for baseline in baselines:
         ok = _run_baseline_correctness(
-            baseline, inputs_snapshot, ref_mod.reference, args.atol, args.rtol,
+            baseline, inputs_snapshot, ref_mod.reference, atol, rtol,
         ) and ok
 
     # --- timing ---------------------------------------------------------

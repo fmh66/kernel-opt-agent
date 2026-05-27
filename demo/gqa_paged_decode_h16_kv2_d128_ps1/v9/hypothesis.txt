@@ -1,0 +1,38 @@
+Version:
+- Source: v9
+- Target: v10
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0509 ms (close to v3's best 0.0497 ms)
+- Bottleneck: Memory-latency-bound — within measurement noise of v3
+- Key metrics: 2-head fusion + precomputed offsets + num_warps tuning all explored
+- NCU symptom to explain: Further optimizations within 1-variable rule show diminishing returns
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Final version combines v3 grid (128 blocks, best performer) with v6 address optimization
+- Conflicts or applicability limits: This is the final iteration — combines the best performing elements
+
+Single change:
+- Change: Use v3 structure + v6's precomputed base page offset (best of both)
+- Scope: v3 kernel with address precomputation optimization from v6
+- Things intentionally not changed: Grid (128), 2-head fusion, num_warps=8, BLOCK_D=128
+
+Rationale:
+- Why: v3 (0.0497 ms) is the proven best version; v6 (0.0499 ms) shows precomputed offsets don't hurt; combining them provides the best v10
+
+Expected metric movement:
+- Improve: Slight improvement over v3
+- Watch for regressions: None expected
+
+Risk:
+- Correctness risk: Low
+- Performance risk: Low
+
+Evidence used:
+- NCU artifacts: v3/ncu_summary.md, v6/ncu_summary.md, v9/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+
+Decision rule:
+- Accept if: correctness passes
+- Reject if: correctness fails

@@ -1,0 +1,39 @@
+Version:
+- Source: v1
+- Target: v2
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0734 ms ± 0.0036 ms (REGRESSION vs v0: 0.0524 ms)
+- Bottleneck: Severe Latency-Bound with grid starvation (SM SOL 5.93%, Memory SOL 0.99%)
+- Key metrics: Achieved Occupancy 8.34%, Grid 32 blocks, Waves/SM 0.0317
+- NCU symptom to explain: Reducing grid from 256 to 32 blocks caused severe occupancy drop and 40% slowdown — fewer blocks increases individual block work but starves SMs
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Grid starvation with only 32 blocks → need more warps per block to compensate → add num_warps=8 (256 threads/block) on v0-style grid of 256 blocks
+- Conflicts or applicability limits: 256 blocks × 256 threads may increase register pressure per SM, but v0 used only 32 regs/thread — doubling warps per block should still fit within SM resource limits
+
+Single change:
+- Change: Add num_warps=8 to v0 kernel structure (increases from default 4 warps = 128 threads to 8 warps = 256 threads per block)
+- Scope: Kernel launch configuration only — no algorithm changes; grid stays at (B, H) = 256 blocks
+- Things intentionally not changed: Grid structure, BLOCK_D=128, online softmax algorithm, page iteration pattern, memory layout
+
+Rationale:
+- Why this should address the measured bottleneck: v0's 4 warps/block provided insufficient latency hiding. With 8 warps/block and the same 256-block grid, each SM gets more concurrent warps (8 warps × 3 blocks/SM = 24 warps) to overlap memory stalls. While one warp waits on global memory, others can issue instructions.
+
+Expected metric movement:
+- Improve: Occupancy (~50% targeting 24 warps/SM), Eligible warps/cycle, Issue slot utilization, Execution time
+- Watch for regressions: Slight register pressure increase due to more warps may cause minor spills; more redundant work (256 threads for BLOCK_D=128 means half idle during vector loads)
+
+Risk:
+- Correctness risk: Low — same algorithm, just more threads; Triton handles thread indexing automatically
+- Performance risk: Medium — extra idle threads waste resource budget per SM, potentially reducing blocks/SM; BLOCK_D=128 with 256 threads means 128 idle threads per vector load
+
+Evidence used:
+- NCU artifacts: v0/ncu_summary.md, v1/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+- KBS docs used for this change: technique-ampere-optimization
+
+Decision rule:
+- Accept if: execution time < 0.0524 ms (v0 baseline) AND correctness passes
+- Reject if: correctness fails OR execution time >= 0.0524 ms (no improvement despite more warps)

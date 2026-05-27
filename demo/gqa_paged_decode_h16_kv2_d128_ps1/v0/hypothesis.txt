@@ -1,0 +1,39 @@
+Version:
+- Source: v0
+- Target: v1
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0524 ms ± 0.0075 ms
+- Bottleneck: Latency-Bound (SM SOL 22.09%, Memory SOL 3.58%)
+- Key metrics: Achieved Occupancy 24.76%, L1 Hit Rate 21.16%, Long SB Stall 11.15%
+- NCU symptom to explain: Each of 256 program instances handles only 1 Q-head, loading the same KV cache pages repeatedly across 8 Q-heads that share a KV head
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Low occupancy + redundant KV reloads -> technique-ampere-optimization (increase work per CTA) -> fuse all Q-heads sharing a KV head into a single program instance
+- Conflicts or applicability limits: Grid reduction from 256 to 32 blocks may under-utilize SMs; but each block now does 8x more work and loads KV pages once instead of 8 times
+
+Single change:
+- Change: Fuse all Q-heads sharing a KV head into one program instance (grid changes from (B, H) to (B, H_kv))
+- Scope: Grid definition, inner loop now iterates over gqa_ratio Q-heads per KV head, accumulator arrays dimension expanded
+- Things intentionally not changed: Block size (128 threads), BLOCK_D (128), online softmax algorithm, page-iteration pattern, BF16 compute path
+
+Rationale:
+- Why this should address the measured bottleneck: v0 loads each KV page 8 times (once per Q-head sharing the same KV head). By fusing all Q-heads per KV head, each page's K/V is loaded once and used for 8 Q-heads, reducing total memory traffic by ~8x for KV loads. Each block does 8x more compute, improving compute density and hiding memory latency better.
+
+Expected metric movement:
+- Improve: Memory throughput (% of peak should rise), Occupancy, L1 hit rate, Compute utilization, Execution time
+- Watch for regressions: Register pressure (8 accumulators instead of 1), potential spills
+
+Risk:
+- Correctness risk: Low — same algorithm, same precisions, just reorganized iteration
+- Performance risk: Register pressure from 8 accumulators may cause spills (32 regs currently, 8*16 regs for accumulators could push past limit) → mitigation: if spills occur, v2 can reduce register pressure
+
+Evidence used:
+- NCU artifacts: ncu_summary.md, ncu_details.md
+- KBS evidence artifact: kbs_evidence.md
+- KBS docs used for this change: technique-ampere-optimization
+
+Decision rule:
+- Accept if: execution time decreases AND correctness passes
+- Reject if: correctness fails OR execution time increases (register spills dominating)

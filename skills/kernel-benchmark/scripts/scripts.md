@@ -60,7 +60,7 @@ FlashInfer baselines use the same `reference(**kwargs)` function. When `--baseli
 | `--gpu=<id>` | `0` | CUDA device index |
 | `--arch=<sm_XX>` | auto | GPU architecture |
 | `--ptr-size=<n>` | auto | Override CUDA pointer buffer element count |
-| `--atol`, `--rtol` | `1e-4`, `1e-3` | Output comparison tolerance |
+| `--atol`, `--rtol` | `ref.py` module-level if set, else `1e-4` / `1e-3` | Output comparison tolerance. CLI flag takes highest precedence, then ref.py module-level `atol`/`rtol`, then internal defaults. When using FlashInfer or other bfloat16 baselines, set `atol=1e-2, rtol=1e-2` in ref.py so the benchmark picks it up automatically. |
 | `--seed=<n>` | `42` | Random seed for generated inputs |
 | `--NAME=VALUE` | required as needed | Integer dimension/scalar args |
 

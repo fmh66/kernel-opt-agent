@@ -1,0 +1,39 @@
+Version:
+- Source: v2
+- Target: v3
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0530 ms ± 0.0092 ms (neutral vs v0 0.0524 ms)
+- Bottleneck: Latency-Bound despite doubled occupancy — scattered KV loads with zero data reuse
+- Key metrics: Occupancy 50.26% (up 2x), L1 Hit Rate 60.09% (up 3x), SM Throughput 41.83% (up 2x), Warp Exec Efficiency 31.99% (flat)
+- NCU symptom to explain: All utilization metrics improved 2-3x but execution time is unchanged — the kernel is fundamentally limited by KV page load latency with zero data reuse between programs
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Zero KV data reuse limits speedup → need Q-head fusion with page-outer loop → process 2 Q-heads per block with KV pages loaded once and reused across both Q-heads
+- Conflicts or applicability limits: Grid reduces from 256 to 128 blocks; register pressure increases slightly (2 accumulators instead of 1); but KV data reuse of 2x and preserved num_warps=8 should more than compensate
+
+Single change:
+- Change: Process 2 adjacent Q-heads sharing a KV head within each block using page-outer loop (KV loaded once, dot products for both Q-heads computed from the same loaded K/V)
+- Scope: Grid changes from (B, H) = (16, 16) to (B, H/2) = (16, 8); block inner loop maintains 2 independent (m, l, acc) states
+- Things intentionally not changed: num_warps=8, BLOCK_D=128, online softmax algorithm, BF16 precision
+
+Rationale:
+- Why this should address the measured bottleneck: v0 and v2 load each KV page once per program instance. With 256 instances and 8 Q-heads sharing each KV head, each page is loaded 8× from global memory. By fusing 2 Q-heads per block, each page is loaded 4× instead of 8×, reducing total KV memory traffic by 2x. The L1/L2 cache should also benefit from immediate reuse of KV data within the block.
+
+Expected metric movement:
+- Improve: Execution time (target < 0.050 ms), Memory throughput, L1 hit rate, Warp execution efficiency
+- Watch for regressions: Slightly lower block count (128 vs 256) may reduce occupancy; register pressure from 2 accumulator sets
+
+Risk:
+- Correctness risk: Low — same online softmax, same precision, each Q-head computed independently
+- Performance risk: Medium — 128 blocks may have slightly lower wave coverage than 256; need to verify occupancy stays above 40%
+
+Evidence used:
+- NCU artifacts: v0/ncu_summary.md, v1/ncu_summary.md, v2/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+- KBS docs used for this change: technique-ampere-optimization (data reuse + occupancy tuning)
+
+Decision rule:
+- Accept if: execution time < 0.050 ms AND correctness passes
+- Reject if: correctness fails OR execution time >= 0.052 ms

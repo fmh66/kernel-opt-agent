@@ -1,0 +1,38 @@
+Version:
+- Source: v4
+- Target: v5
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0510 ms ± 0.0041 ms (REGRESSION vs v3 0.0497 ms)
+- Bottleneck: Grid starvation with 64 blocks on 84-SM GPU
+- Key metrics: 4x KV reuse loses more to occupancy loss than it gains from reduced memory traffic
+- NCU symptom to explain: Grid must stay >=128 blocks; need latency improvement from compute side
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Grid starvation limits fusion strategy → use fast math exp approximation (tl.math.exp2) to reduce compute latency without reducing grid
+- Conflicts or applicability limits: Fast exp may slightly reduce numerical precision (acceptable within BF16 tolerance)
+
+Single change:
+- Change: Replace tl.exp() with tl.math.exp2(x * log2e) for faster hardware-accelerated exponential on Ampere
+- Scope: Inner loop exp() calls in the kernel — keep v3's grid (128 blocks) and 2-head fusion structure
+- Things intentionally not changed: Grid, num_warps, memory layout, online softmax algorithm structure, 2-head fusion
+
+Rationale:
+- Why this should address the measured bottleneck: Ampere SM86 provides MUFU.EX2 instruction for fast exp2(), which is faster than the full-precision exp path. Each page iteration calls 3 exp() per Q-head; with 2 Q-heads × ~16 pages × 3 exp = ~96 exp() calls per block, replacing with faster exp2 should reduce compute latency.
+
+Expected metric movement:
+- Improve: Execution time (target < 0.0497 ms), compute throughput
+- Watch for regressions: Slight precision loss from fast exp; FP32 output should still be within tolerance
+
+Risk:
+- Correctness risk: Low-Medium — fast exp approximation may lose ~1 ULP of precision; BF16 output tolerance already at 1e-2, so likely fine
+- Performance risk: Low — faster hardware instruction with no architectural changes
+
+Evidence used:
+- NCU artifacts: v3/ncu_summary.md, v4/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+
+Decision rule:
+- Accept if: execution time < 0.0497 ms AND correctness passes
+- Reject if: correctness fails due to precision loss

@@ -1,0 +1,38 @@
+Version:
+- Source: v5
+- Target: v6
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0519 ms (regression vs v3 0.0497 ms)
+- Bottleneck: Memory-latency-bound — math pipeline optimizations don't matter
+- Key metrics: Kernel is dominated by scattered KV cache access latency; need to reduce per-iteration overhead
+- NCU symptom to explain: Address computation (multiply kv_idx * stride_kv_page + kv_head * head_dim) repeated per page with redundant instructions
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Redundant address computation each page iteration → precompute page base offsets
+- Conflicts or applicability limits: None; purely instruction-level improvement
+
+Single change:
+- Change: Precompute per-page KV base offsets by moving stride multiplication outside the page loop (compute kv_offset_base then add head_dim offset per page)
+- Scope: Reorder address computation: compute stride_kv_page * kv_idx using pointer arithmetic instead of repeated multiplication
+- Things intentionally not changed: Grid (128 blocks), 2-head fusion, num_warps=8, fast exp (keep tl.exp for precision)
+
+Rationale:
+- Why this should address the bottleneck: Each page iteration computes kv_offset = kv_idx * stride_per_page + kv_head * head_dim. The kv_idx * stride multiplication is redundant since kv_indices are consecutive. Using a base+offset addressing pattern reduces instruction count and register pressure per iteration.
+
+Expected metric movement:
+- Improve: Execution time (modest), IPC, instruction count
+- Watch for regressions: None expected
+
+Risk:
+- Correctness risk: Low — same addressing semantics, different computation order
+- Performance risk: Low — fewer instructions per iteration
+
+Evidence used:
+- NCU artifacts: v5/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+
+Decision rule:
+- Accept if: execution time < 0.051 ms
+- Reject if: correctness fails or no measurable improvement

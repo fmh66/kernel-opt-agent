@@ -23,6 +23,14 @@ Write the hypothesis to the current version directory before editing the next ve
 <output_dir>/vK/hypothesis.txt
 ```
 
+The current version directory must also contain:
+
+```text
+<output_dir>/vK/kbs_evidence.md
+```
+
+`kbs_evidence.md` owns the KBS queries, selected docs, confidence labels, and rejection notes. `hypothesis.txt` should only reference it and summarize the decision link.
+
 ## Template
 
 ```text
@@ -35,6 +43,11 @@ Current evidence:
 - Runtime:
 - Bottleneck:
 - Key metrics:
+- NCU symptom to explain:
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change:
+- Conflicts or applicability limits:
 
 Single change:
 - Change:
@@ -54,7 +67,8 @@ Risk:
 
 Evidence used:
 - NCU artifacts:
-- KBS docs:
+- KBS evidence artifact: kbs_evidence.md
+- KBS docs used for this change:
 
 Decision rule:
 - Accept if:
