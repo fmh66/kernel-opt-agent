@@ -1,0 +1,38 @@
+Version:
+- Source: v3
+- Target: v4
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0497 ms ± 0.0042 ms (5.2% speedup vs v0)
+- Bottleneck: Mixed, improving with KV data reuse
+- Key metrics: 2x KV reuse yielded measurable speedup; grid still sufficient at 128 blocks
+- NCU symptom to explain: KV data reuse reduced memory latency pressure — extending from 2x to 4x should further reduce global memory traffic
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: 2x KV reuse → 5% speedup → increase to 4x reuse → process 4 Q-heads per block
+- Conflicts or applicability limits: Grid drops to 64 blocks; register pressure increases with 4 accumulator sets; may hit diminishing returns as L1/L2 cache already captures some reuse
+
+Single change:
+- Change: Increase Q-head fusion from 2 to 4 per block (grid changes from (B, 8) to (B, 4), each block processes 4 Q-heads sharing a KV head)
+- Scope: Grid definition, 4 sets of (m, l, acc) instead of 2
+- Things intentionally not changed: num_warps=8, BLOCK_D=128, online softmax, page-outer loop, BF16
+
+Rationale:
+- Why this should address the measured bottleneck: Each KV page load now serves 4 dot products instead of 2, halving the per-head memory traffic again
+
+Expected metric movement:
+- Improve: Execution time, memory throughput, L1 hit rate
+- Watch for regressions: Grid at 64 blocks may show slight occupancy drop; 4 accumulators increase register usage
+
+Risk:
+- Correctness risk: Low — same algorithm structure, just 4 independent Q-head computations
+- Performance risk: Medium — 64 blocks versus 84 SMs means some SMs may idle; register pressure with 4 accumulator sets
+
+Evidence used:
+- NCU artifacts: v3/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+
+Decision rule:
+- Accept if: execution time < 0.0497 ms AND correctness passes
+- Reject if: correctness fails OR grid starvation causes regression

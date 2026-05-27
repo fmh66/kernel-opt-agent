@@ -1,0 +1,38 @@
+Version:
+- Source: v7
+- Target: v8
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0572 ms (REGRESSION — .cg cache hint bypasses L1 for reused data)
+- Bottleneck: L1 bypass prevents intra-block KV reuse from benefiting
+- Key metrics: High variability suggests cache thrashing
+- NCU symptom to explain: 2 Q-heads per block need L1 for immediate KV reuse; .cg prevents this
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Cache hints wrong for this pattern → revert to default cache, reduce num_warps to 4
+- Conflicts or applicability limits: num_warps=4 gives fewer warps per block but potentially more blocks per SM
+
+Single change:
+- Change: Revert cache hints, change num_warps from 8 to 4
+- Scope: num_warps parameter only; use v3 kernel structure (no cache hints)
+- Things intentionally not changed: Grid (128 blocks), 2-head fusion, BLOCK_D=128
+
+Rationale:
+- Why: num_warps=4 with current register usage (low) may increase blocks/SM occupancy
+
+Expected metric movement:
+- Improve: Occupancy, blocks/SM
+- Watch for regressions: Fewer warps/block means less latency hiding per block
+
+Risk:
+- Correctness risk: Low
+- Performance risk: Medium — fewer warps may reduce latency hiding
+
+Evidence used:
+- NCU artifacts: v7/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+
+Decision rule:
+- Accept if: runtime < 0.050 ms
+- Reject if: regression from v3

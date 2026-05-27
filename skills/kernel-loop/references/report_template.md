@@ -10,10 +10,12 @@ Fill values from measured artifacts only:
 | `v*/correctness.md` | Correctness status |
 | `v*/ncu_summary.md` | Runtime, throughput, occupancy, bottleneck, high-level stalls |
 | `v*/ncu_details.md` | Detailed metrics not present in the summary |
+| `v*/kbs_evidence.md` | KBS queries, selected doc ids/paths, confidence labels, applicability notes |
 | `v*/hypothesis.txt` | Strategy, rationale, expected gain, decision rule |
 | `benchmark.md` | Final timing and baseline speedups |
 
 Use `N/A` for metrics that were not collected. Use `unknown` for expected values that cannot be located in artifacts. Do not invent missing measurements.
+Do not write `KBS docs: N/A` or `No KBS queries were made` unless the corresponding `kbs_evidence.md` exists.
 
 In strategy tables, list only strategies that were actually used in at least one version. Use `yes` for the version where the listed strategy was applied and `no` for versions where that same strategy was not applied. Do not include unused strategy rows.
 
@@ -47,7 +49,6 @@ In strategy tables, list only strategies that were actually used in at least one
 | Warp Stall - Long SB (%) | | | | | | |
 | Warp Stall - Short SB (%) | | | | | | |
 | Branch Divergence (%) | | | | | | |
-| Key metric notes | | | | | | |
 
 ---
 
@@ -60,30 +61,37 @@ Only include strategies that were actually used in at least one version. Add row
 | `<used strategy>` | yes/no | yes/no | yes/no | |
 | `<used strategy>` | yes/no | yes/no | yes/no | |
 
-**Decision rationale per version:**
-
-- **v1:** `<strategy selection rationale and expected gain>`
-- **v2:** `<strategy selection rationale and expected gain>`
-- **v3:** `<strategy selection rationale and expected gain>`
-
 ---
 
 ## Hypothesis Outcomes
 
-| Transition | Hypothesis | Result | Evidence |
-|---|---|---|---|
-| v0 -> v1 | `<single change>` | improved/regressed/neutral/invalid | `<metrics>` |
-| v1 -> v2 | `<single change>` | improved/regressed/neutral/invalid | `<metrics>` |
-| v2 -> v3 | `<single change>` | improved/regressed/neutral/invalid | `<metrics>` |
+| Transition | NCU Symptom | KBS Pattern | Hypothesis | Result | Evidence |
+|---|---|---|---|---|---|
+| v0 -> v1 | `<measured bottleneck/stall>` | `<doc-id: pattern>` | `<single change>` | improved/regressed/neutral/invalid | `<metrics>` |
+| v1 -> v2 | `<measured bottleneck/stall>` | `<doc-id: pattern>` | `<single change>` | improved/regressed/neutral/invalid | `<metrics>` |
+| v2 -> v3 | `<measured bottleneck/stall>` | `<doc-id: pattern>` | `<single change>` | improved/regressed/neutral/invalid | `<metrics>` |
 
 ---
 
 ## KBS Evidence
 
-| Version | Doc ID | Canonical path | Used for |
+| Version | Query | Doc ID | Canonical path | Confidence | Used for / Applicability |
+|---|---|---|---|---|---|
+| v1 | `<query string>` | `<doc-id>` | `<path>` | `<verified/source-reported/inferred/experimental>` | `<how it maps to NCU symptom and selected change>` |
+| v2 | `<query string>` | `<doc-id>` | `<path>` | `<confidence>` | `<how it maps to NCU symptom and selected change>` |
+
+For rejected KBS results, summarize briefly below the table when they affected the decision:
+
+- `vK`: `<doc-id>` rejected because `<architecture/layout/dtype/bottleneck mismatch>`.
+
+---
+
+## NCU + KBS Synthesis
+
+| Version | NCU fact set | KBS evidence | Decision |
 |---|---|---|---|
-| v1 | `<doc-id or N/A>` | `<path or N/A>` | `<strategy/rationale>` |
-| v2 | `<doc-id or N/A>` | `<path or N/A>` | `<strategy/rationale>` |
+| v1 | `<runtime + bottleneck + key metrics>` | `<doc ids/patterns>` | `<why the one-variable change follows from both>` |
+| v2 | `<runtime + bottleneck + key metrics>` | `<doc ids/patterns>` | `<why the one-variable change follows from both>` |
 
 ---
 

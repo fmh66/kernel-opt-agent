@@ -1,0 +1,38 @@
+Version:
+- Source: v6
+- Target: v7
+
+Current evidence:
+- Correctness: pass
+- Runtime: 0.0499 ms (tied with v3 at 0.0497 ms)
+- Bottleneck: Memory-latency-bound — scattered KV page access still dominates
+- Key metrics: Address computation optimization is neutral; need to reduce memory access latency
+- NCU symptom to explain: KV pages are streamed once and not reused across blocks — L1 caching wastes capacity
+
+Decision link:
+- NCU symptom -> KBS pattern -> proposed change: Streaming memory loads can bypass L1 → add cache_modifier=".cg" to K/V loads
+- Conflicts or applicability limits: .cg bypasses L1 entirely; within-block reuse (2 Q-heads) still benefits from L1
+
+Single change:
+- Change: Add cache_modifier=".cg" to K/V global loads (streaming non-temporal hint)
+- Scope: K/V tl.load calls in the page loop
+- Things intentionally not changed: Grid structure, 2-head fusion, num_warps=8, address precomputation
+
+Rationale:
+- Why this should address the bottleneck: KV pages are streamed once per block and never reused across blocks — .cg (cache-global) bypasses L1, reducing L1 pollution and potentially improving L2 utilization
+
+Expected metric movement:
+- Improve: Memory throughput, L1 efficiency for non-KV data
+- Watch for regressions: Within-block KV reuse (2 Q-heads) may suffer from L1 bypass
+
+Risk:
+- Correctness risk: Low — cache hints don't affect numerical results
+- Performance risk: Medium — within-block reuse may suffer from no L1
+
+Evidence used:
+- NCU artifacts: v6/ncu_summary.md
+- KBS evidence artifact: kbs_evidence.md
+
+Decision rule:
+- Accept if: execution time < 0.0497 ms
+- Reject if: correctness fails or runtime regresses

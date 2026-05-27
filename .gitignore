@@ -2,13 +2,13 @@
 test
 .claude
 .codex
+.agents
 .venv
 __pycache__
 *.so
 kernelbench
 .humanize
 setup_kernels.py
-demo
 skills/kernel-opt-skill
 README-zh.md
 README.md
